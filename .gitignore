@@ -1,0 +1,41 @@
+# Build artifacts
+*.exe
+*.o
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# CMake build directories
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+
+# PyInstaller
+dist/
+build/
+*.spec
+__pycache__/
+*.pyc
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large data files (keep small test files)
+data/20220422/*.log
+data/20220425/*.log
+data/20220426/*.log
+
+# Temporary
+*.tmp
+*.bak
