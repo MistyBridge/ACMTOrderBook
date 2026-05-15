@@ -317,6 +317,11 @@ class Dashboard(tk.Tk):
 
     def _run_thread(self, r):
         try:
+            # 创建 startupinfo 以完全隐藏窗口
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+
             proc = subprocess.Popen(
                 r._cmd,
                 stdout=subprocess.PIPE,
@@ -325,6 +330,7 @@ class Dashboard(tk.Tk):
                 bufsize=0,
                 universal_newlines=True,
                 env=r._env,
+                startupinfo=startupinfo,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
             buf = ""
