@@ -267,7 +267,8 @@ class Dashboard(tk.Tk):
 
         if key == "py":
             py_main = self.cfg_vars["py_main"].get()
-            cmd = [py_main, data]
+            # Python 参数：data [replay_count]
+            cmd = [py_main, data, str(replay_count)]
             cwd = PROJECT_DIR
             env = None
         else:
