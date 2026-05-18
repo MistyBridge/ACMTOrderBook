@@ -76,12 +76,12 @@ def run(data_file, replay_count=1):
             ask, bid = axob._getLevels(5)
             print(f"\n--- 5 Level OrderBook ---")
             for i in range(4, -1, -1):
-                if i in ask and ask[i].qty > 0:
-                    print(f"  Ask[{i}]  {ask[i].price} * {ask[i].qty}")
+                if i in ask and ask[i].Qty > 0:
+                    print(f"  Ask[{i}]  {ask[i].Price} * {ask[i].Qty}")
             print(f"  -----")
             for i in range(5):
-                if i in bid and bid[i].qty > 0:
-                    print(f"  Bid[{i}]  {bid[i].price} * {bid[i].qty}")
+                if i in bid and bid[i].Qty > 0:
+                    print(f"  Bid[{i}]  {bid[i].Price} * {bid[i].Qty}")
 
 if __name__ == "__main__":
     data_file = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_DATA
