@@ -41,6 +41,8 @@ def run(data_file, replay_count=1):
         next_report = 0
         report_interval = 234
 
+        replay_t0 = time.time()
+
         for msg in axsbe_file(data_file):
             axob.onMsg(msg)
             totalCnt += 1
@@ -51,7 +53,12 @@ def run(data_file, replay_count=1):
             else:
                 snapCnt += 1
             if totalCnt >= next_report:
-                print(f"  {totalCnt + replay * totalCnt} msgs...")
+                # 计算全局消息数和实时速度
+                global_cnt = totalCnt + replay * totalCnt
+                elapsed_now = time.time() - replay_t0
+                speed = int(totalCnt / elapsed_now) if elapsed_now > 0 else 0
+                # 格式化为千分位，匹配仪表盘解析格式
+                print(f"  {global_cnt:,} msgs  |  {elapsed_now:.1f}s  |  {speed:,} msg/s")
                 sys.stdout.flush()
                 next_report += report_interval
 
@@ -63,7 +70,7 @@ def run(data_file, replay_count=1):
         # 最后一次重放打印详细状态
         if replay == replay_count - 1:
             print(f"\n=== Results ===")
-            print(f"Total: {total_msgs} msgs (order={total_order} exe={total_exe} snap={total_snap})")
+            print(f"Total: {total_msgs:,} msgs (order={total_order:,} exe={total_exe:,} snap={total_snap:,})")
             elapsed = time.time() - t0
             print(f"Time:  {elapsed:.3f} s ({int(total_msgs/elapsed)} msg/s)")
             print(f"\nOrderBook State:")
