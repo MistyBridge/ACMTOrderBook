@@ -163,13 +163,11 @@ void AXOB::levelDequeue(Side side, int32_t price, int32_t qty, [[maybe_unused]] 
             bidLevelBook.erase(price);
             if (price == bidMaxPrice) {
                 bidMaxQty = 0;
-                // CompactLevelBook 升序排列，最高买价在末尾
-                for (int i = bidLevelBook.count - 1; i >= 0; i--) {
-                    if (bidLevelBook.levels[i].price < price) {
-                        bidMaxPrice = bidLevelBook.levels[i].price;
-                        bidMaxQty   = bidLevelBook.levels[i].qty;
-                        break;
-                    }
+                // [v2.2优化] O(1) 直接取最优价：升序数组末尾 = 最大买价
+                // erase 已移除原最优价，levels[count-1] 必然 < 原 price
+                if (bidLevelBook.count > 0) {
+                    bidMaxPrice = bidLevelBook.levels[bidLevelBook.count - 1].price;
+                    bidMaxQty   = bidLevelBook.levels[bidLevelBook.count - 1].qty;
                 }
                 if (bidMaxQty != 0)      askCageRefPx = bidMaxPrice;
                 else if (askMinQty != 0) askCageRefPx = askMinPrice;
@@ -213,13 +211,11 @@ void AXOB::levelDequeue(Side side, int32_t price, int32_t qty, [[maybe_unused]] 
             askLevelBook.erase(price);
             if (price == askMinPrice) {
                 askMinQty = 0;
-                // CompactLevelBook 升序，最小卖价在开头
-                for (int i = 0; i < askLevelBook.count; i++) {
-                    if (askLevelBook.levels[i].price > price) {
-                        askMinPrice = askLevelBook.levels[i].price;
-                        askMinQty   = askLevelBook.levels[i].qty;
-                        break;
-                    }
+                // [v2.2优化] O(1) 直接取最优价：升序数组开头 = 最小卖价
+                // erase 已移除原最优价，levels[0] 必然 > 原 price
+                if (askLevelBook.count > 0) {
+                    askMinPrice = askLevelBook.levels[0].price;
+                    askMinQty   = askLevelBook.levels[0].qty;
                 }
                 if (askMinQty != 0)      bidCageRefPx = askMinPrice;
                 else if (bidMaxQty != 0) bidCageRefPx = bidMaxPrice;

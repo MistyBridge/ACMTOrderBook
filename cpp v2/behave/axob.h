@@ -22,6 +22,28 @@
 #include "../core/memory_pool.h"
 #endif
 
+// [v2.2优化] 平铺哈希表支持 — 通过编译宏开关选择哈希表实现
+// 默认使用 std::unordered_map，可通过 CMakeLists.txt 切换到高性能平铺哈希表
+#ifndef USE_FLAT_HASHMAP
+#define USE_FLAT_HASHMAP 0
+#endif
+
+#if USE_FLAT_HASHMAP == 1
+    // ankerl::unordered_dense::map — 单头文件，C++17，极致性能
+    #include "../third_party/unordered_dense/include/ankerl/unordered_dense.h"
+    template<typename K, typename V>
+    using HashMap = ankerl::unordered_dense::map<K, V>;
+#elif USE_FLAT_HASHMAP == 2
+    // phmap::flat_hash_map — Google abseil，SIMD 优化
+    #include "../third_party/abseil-cpp/absl/container/flat_hash_map.h"
+    template<typename K, typename V>
+    using HashMap = absl::flat_hash_map<K, V>;
+#else
+    // std::unordered_map — 标准库，兼容性最好
+    template<typename K, typename V>
+    using HashMap = std::unordered_map<K, V>;
+#endif
+
 // =====================================================================
 //  AXOB — 订单簿重建引擎（v2 优化版）
 //
@@ -63,8 +85,11 @@ public:
     int32_t OpenPx            = 0;
 
     // ==================== 核心数据结构 ====================
-    // [v2优化] orderMap 存储 ObOrder* 指针，配合 MemoryPool 减少堆分配
-    std::unordered_map<uint64_t, ObOrder*> orderMap;
+    // [v2.2优化] orderMap 使用平铺哈希表，提升查找/插入/删除性能
+    // USE_FLAT_HASHMAP=0: std::unordered_map (默认)
+    // USE_FLAT_HASHMAP=1: ankerl::unordered_dense::map (推荐)
+    // USE_FLAT_HASHMAP=2: phmap::flat_hash_map (Google abseil)
+    HashMap<uint64_t, ObOrder*> orderMap;
     // [v2优化] HybridLevelBook 替代 std::map — 根据档位数量动态选择
     // n≤256: 排序数组（连续内存，缓存友好）
     // n>256: std::map（O(log n)，避免大数组 memmove）
@@ -126,7 +151,8 @@ public:
 
     // ==================== 调试/测试 ====================
     int msgNb = 0;
-    AxsbeSnapStock* lastSnap = nullptr;
+    // [v2.2优化] lastSnap 从堆分配改为栈上对象，省掉每条消息的 delete/new (~50ns)
+    AxsbeSnapStock lastSnap;
 
     // ==================== 构造 ====================
 #if USE_MEMORY_POOL
@@ -190,7 +216,10 @@ public:
         ObOrder* p = new ObOrder();
 #endif
         *p = order;
-        orderMap[seq] = p;
+        // [v2.2优化] 修复双重哈希：emplace 替代 operator[]
+        // operator[] 内部先 find(seq) → 再 emplace，两次哈希计算
+        // emplace 直接插入，单次哈希
+        orderMap.emplace(seq, p);
     }
     void eraseOrderMap(uint64_t seq) {
         auto it = orderMap.find(seq);

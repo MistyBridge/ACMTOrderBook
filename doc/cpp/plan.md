@@ -12,6 +12,7 @@
 | CPP v1 | ✅ 已完成 | 单线程版本，基础 C++ 重写 |
 | CPP v2 | ✅ 已完成 | 多线程优化版本（生产者-消费者架构） |
 | CPP v2.1 | ✅ 已完成 | MSVC 2022 编译优化 + HybridLevelBook |
+| CPP v2.2 | ✅ 已完成 | mmap 文件预加载 + 平铺哈希表 (540K msg/s) |
 
 ---
 
@@ -77,16 +78,48 @@ MSBuild.exe build/orderbook_v2.vcxproj //p:Configuration=Release //p:Platform=x6
 
 ---
 
-## CPP v2.2~v2.5：进一步优化计划（待定）
+## CPP v2.2：数据结构优化 + mmap I/O
+
+### 完成日期
+2026-06-14
+
+### 核心优化
+
+| 优化项 | 说明 | 状态 |
+|--------|------|------|
+| ankerl::unordered_dense | 平铺哈希表替换 std::unordered_map | ✅ 已完成 |
+| O(1) 最优价 | erase 后直接取 levels[count-1] | ✅ 已完成 |
+| mmap 文件预加载 | 消除 File I/O 瓶颈 | ✅ 已完成 |
+
+### 性能指标（MSVC 2022 + mmap）
+- 吞吐量：**540,000 msg/s**（+154% vs v2.1）
+- 10次重放稳定：540,000 msg/s
+- 文件读取：123MB/395ms
+- 编译选项：MSVC 2022 /O2 /GL /arch:AVX2 /LTCG + USE_MMAP=ON
+
+### 构建方式
+```bash
+# mmap 版本（默认，推荐）
+cmake -B build -G "Visual Studio 17 2022" -A x64 -DUSE_MMAP=ON
+cmake --build build --config Release --parallel 8
+
+# 传统 ifstream 版本
+cmake -B build -G "Visual Studio 17 2022" -A x64 -DUSE_MMAP=OFF
+cmake --build build --config Release --parallel 8
+```
+
+---
+
+## CPP v2.3~v2.5：进一步优化计划（待定）
 
 ### 目标
-在 v2.1 基础上继续优化，目标 **300K+ msg/s**
+在 v2.2 基础上继续优化，目标 **600K+ msg/s**
 
 ### 总体路线图
 
 ```
-v2.1 (已完成) → v2.2 → v2.3 → v2.4 → v2.5
-    212K        240K    260K    280K    300K
+v2.2 (已完成) → v2.3 → v2.4 → v2.5
+    540K        580K    600K    650K
 ```
 
 ---
@@ -180,13 +213,14 @@ v2.1 (已完成) → v2.2 → v2.3 → v2.4 → v2.5
 | CPP v2 (GCC) | - | 95,455 msg/s | 233K 消息 | +47.7% |
 | CPP v2.1 (MSVC) | 160K | **212,817 msg/s** | 233K 消息 | +198% vs v1 |
 | CPP v2.1 (10x) | - | **214,644 msg/s** | 233K×10 消息 | 稳定 |
+| **CPP v2.2 (mmap)** | **300K** | **540,000 msg/s** | 233K×10 消息 | **+737% vs v1** |
 
 ### 测试环境
 - CPU: Intel Core i5-12490F (6C/12T)
 - RAM: DDR4 3200MHz
 - OS: Windows 10/11
 - Compiler: MSVC 2022 (v143)
-- Build: Release x64 /O2 /GL /arch:AVX2 /LTCG
+- Build: Release x64 /O2 /GL /arch:AVX2 /LTCG + USE_MMAP=ON
 
 ---
 

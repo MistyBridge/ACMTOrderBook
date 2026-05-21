@@ -39,3 +39,4 @@ data/20220426/*.log
 # Temporary
 *.tmp
 *.bak
+third_party/

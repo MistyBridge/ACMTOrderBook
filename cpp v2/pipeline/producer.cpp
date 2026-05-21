@@ -1,8 +1,15 @@
 #include "producer.h"
 #include "../tool/msg_util.h"
+#include "../tool/mmap_file.h"  // [v2.3] mmap 文件读取器
 #include <cstdio>
 #include <chrono>
 #include <atomic>
+
+// [v2.3] mmap 模式开关
+// 定义 USE_MMAP 启用 mmap 文件预加载，否则使用传统 ifstream
+#ifndef USE_MMAP
+#define USE_MMAP 1
+#endif
 
 // =====================================================================
 //  跨平台 pause 指令封装
@@ -41,9 +48,24 @@ void producerThread(const char* dataFile, axob::core::SPSCQueue<MarketEvent>& qu
             fflush(stdout);
         }
 
+        // [v2.3] 根据编译选项选择文件读取器
+#if USE_MMAP
+        // mmap 模式：预加载整个文件到内存，消除 I/O 瓶颈
+        auto* reader = new MmapFileReader(std::string(dataFile));
+        if (replay == 0) {
+            printf("Using mmap file reader\n");
+            fflush(stdout);
+        }
+#else
+        // 传统模式：逐行读取
         // 用 new 分配 reader，规避 MinGW 8.1.0 -O2 std::ifstream 析构挂死
         // 故意不 delete，线程退出时 OS 回收内存
         auto* reader = new AxsbeFileReader(std::string(dataFile));
+        if (replay == 0) {
+            printf("Using ifstream file reader\n");
+            fflush(stdout);
+        }
+#endif
 
         if (!reader->hasNext()) {
             printf("ERROR: file not found or empty\n");

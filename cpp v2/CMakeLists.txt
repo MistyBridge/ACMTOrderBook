@@ -2,6 +2,26 @@ cmake_minimum_required(VERSION 3.14)
 project(AXOrderBook_v2 LANGUAGES CXX)
 
 # =====================================================================
+#  依赖管理选项
+# =====================================================================
+option(USE_ROBIN_HOOD "Use robin_hood::unordered_map" OFF)
+option(USE_PHMAP "Use phmap::flat_hash_map (Google abseil)" OFF)
+option(USE_UNORDERED_DENSE "Use ankerl::unordered_dense::map" OFF)
+option(BUILD_BENCHMARK "Build hashmap benchmark" ON)
+
+# [v2.2] 平铺哈希表选项
+# USE_FLAT_HASHMAP=0: std::unordered_map (默认)
+# USE_FLAT_HASHMAP=1: ankerl::unordered_dense::map (推荐，单头文件)
+# USE_FLAT_HASHMAP=2: phmap::flat_hash_map (Google abseil，SIMD 优化)
+set(USE_FLAT_HASHMAP 0 CACHE STRING "Flat hashmap implementation (0=std, 1=ankerl, 2=phmap)")
+set_property(CACHE USE_FLAT_HASHMAP PROPERTY STRINGS 0 1 2)
+
+# [v2.3] mmap 文件预加载选项
+# USE_MMAP=1: 启用 mmap 文件预加载（默认，推荐）
+# USE_MMAP=0: 使用传统 ifstream 逐行读取
+option(USE_MMAP "Use mmap for file I/O (v2.3 optimization)" ON)
+
+# =====================================================================
 #  AXOrderBook v2 — 多线程订单簿撮合引擎  CMakeLists.txt
 #
 # =====================================================================
@@ -145,10 +165,13 @@ add_executable(orderbook_v2 ${SOURCES})
 #    MultiThreadedDebugDLL → MultiThreadedDebug
 # -----------------------------------------------------------------
 
-# 链接线程库（MSVC 下 Threads::FOUND=TRUE 但实际链接库列表为空，
-# Windows 原生支持线程，无需额外链接）
-find_package(Threads REQUIRED)
-target_link_libraries(orderbook_v2 PRIVATE Threads::Threads)
+# 链接线程库
+# MSVC: Windows 原生支持线程，无需额外链接
+# GCC/Clang: 需要 pthread
+find_package(Threads)
+if(TARGET Threads::Threads)
+    target_link_libraries(orderbook_v2 PRIVATE Threads::Threads)
+endif()
 
 # Windows 特定预处理器定义
 if(WIN32)
@@ -157,6 +180,18 @@ if(WIN32)
         WIN32_LEAN_AND_MEAN        # 排除不常用的 Windows 头文件，加速编译
         NOMINMAX                   # 阻止 windows.h 定义 min/max 宏，避免与 <algorithm> 冲突
     )
+endif()
+
+# [v2.2] 平铺哈希表宏定义
+target_compile_definitions(orderbook_v2 PRIVATE
+    USE_FLAT_HASHMAP=${USE_FLAT_HASHMAP}
+)
+
+# [v2.3] mmap 文件预加载宏定义
+if(USE_MMAP)
+    target_compile_definitions(orderbook_v2 PRIVATE USE_MMAP=1)
+else()
+    target_compile_definitions(orderbook_v2 PRIVATE USE_MMAP=0)
 endif()
 
 # 编译选项
@@ -199,3 +234,82 @@ endif()
 set_source_files_properties(tool/msg_util.cpp PROPERTIES
     COMPILE_OPTIONS "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-fno-inline>"
 )
+
+# =====================================================================
+#  依赖管理 — FetchContent
+# =====================================================================
+
+include(FetchContent)
+
+# robin_hood (header-only)
+if(USE_ROBIN_HOOD)
+    FetchContent_Declare(
+        robin_hood
+        GIT_REPOSITORY https://github.com/martinus/robin-hood-hashing.git
+        GIT_TAG        3.11.5
+    )
+    FetchContent_MakeAvailable(robin_hood)
+    target_compile_definitions(orderbook_v2 PRIVATE USE_ROBIN_HOOD)
+    target_link_libraries(orderbook_v2 PRIVATE robin_hood::robin_hood)
+endif()
+
+# phmap (abseil - header-only subset)
+if(USE_PHMAP)
+    FetchContent_Declare(
+        abseil
+        GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
+        GIT_TAG        20230802.0
+    )
+    # abseil 需要 C++17
+    set(ABSL_CXX_STANDARD 17)
+    FetchContent_MakeAvailable(abseil)
+    target_compile_definitions(orderbook_v2 PRIVATE USE_PHMAP)
+    target_link_libraries(orderbook_v2 PRIVATE absl::flat_hash_map)
+endif()
+
+# ankerl::unordered_dense (header-only)
+if(USE_UNORDERED_DENSE)
+    # 使用本地已下载的 unordered_dense（header-only 库）
+    set(UNORDERED_DENSE_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/unordered_dense/include")
+    if(EXISTS "${UNORDERED_DENSE_INCLUDE_DIR}/ankerl/unordered_dense.h")
+        target_include_directories(orderbook_v2 PRIVATE "${UNORDERED_DENSE_INCLUDE_DIR}")
+        target_compile_definitions(orderbook_v2 PRIVATE USE_UNORDERED_DENSE)
+        message(STATUS "Using local unordered_dense: ${UNORDERED_DENSE_INCLUDE_DIR}")
+    else()
+        message(FATAL_ERROR "unordered_dense not found at ${UNORDERED_DENSE_INCLUDE_DIR}. Run: git clone https://github.com/martinus/unordered_dense.git third_party/unordered_dense")
+    endif()
+endif()
+
+# =====================================================================
+#  基准测试目标
+# =====================================================================
+
+if(BUILD_BENCHMARK)
+    add_executable(hashmap_benchmark benchmark/hashmap_benchmark.cpp)
+    target_compile_features(hashmap_benchmark PRIVATE cxx_std_17)
+
+    # MSVC 特定选项
+    if(MSVC)
+        target_compile_options(hashmap_benchmark PRIVATE
+            /utf-8 /O2 /arch:AVX2
+        )
+    else()
+        target_compile_options(hashmap_benchmark PRIVATE
+            -O3 -march=native
+        )
+    endif()
+
+    # 链接哈希表库（如果启用）
+    if(USE_ROBIN_HOOD)
+        target_link_libraries(hashmap_benchmark PRIVATE robin_hood::robin_hood)
+        target_compile_definitions(hashmap_benchmark PRIVATE USE_ROBIN_HOOD)
+    endif()
+    if(USE_PHMAP)
+        target_link_libraries(hashmap_benchmark PRIVATE absl::flat_hash_map)
+        target_compile_definitions(hashmap_benchmark PRIVATE USE_PHMAP)
+    endif()
+    if(USE_UNORDERED_DENSE)
+        target_include_directories(hashmap_benchmark PRIVATE "${UNORDERED_DENSE_INCLUDE_DIR}")
+        target_compile_definitions(hashmap_benchmark PRIVATE USE_UNORDERED_DENSE)
+    endif()
+endif()

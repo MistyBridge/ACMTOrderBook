@@ -133,8 +133,8 @@ void AXOB::genSnap() {
 
     clipSnap(snap);
     snap._seq = msgNb;
-    delete lastSnap;
-    lastSnap = new AxsbeSnapStock(snap);
+    // [v2.2优化] 直接赋值栈上对象，省掉 delete/new 堆分配
+    lastSnap = snap;
 }
 
 // 集合竞价快照 — 虚拟撮合算法

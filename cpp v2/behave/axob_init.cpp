@@ -62,7 +62,7 @@ AXOB::~AXOB() {
     }
 #endif
 
-    delete lastSnap;
+    // [v2.2优化] lastSnap 已改为栈上对象，无需 delete
 }
 
 // ---- 时戳转内部精度 ----

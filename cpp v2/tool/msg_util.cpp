@@ -3,34 +3,49 @@
 #include "msg_util.h"
 
 // ---- parseKeyValueLine ----
+// [v2.3优化] 直接解析整数，避免临时 string 分配
+// - key：仍需创建 string（map 键类型要求）
+// - value：直接在原地解析整数，不创建临时 string
+static inline int64_t parseIntFast(const char* data, size_t len) {
+    if (len == 0) return 0;
+    int64_t result = 0;
+    bool negative = false;
+    size_t i = 0;
+    if (data[0] == '-') { negative = true; i = 1; }
+    for (; i < len; ++i) {
+        char c = data[i];
+        if (c < '0' || c > '9') break;
+        result = result * 10 + (c - '0');
+    }
+    return negative ? -result : result;
+}
+
 std::unordered_map<std::string, int64_t> parseKeyValueLine(const std::string& line) {
     std::unordered_map<std::string, int64_t> dict;
     if (line.size() < 2 || line[0] != '/' || line[1] != '/') return dict;
 
+    const char* data = line.data();
+    size_t len = line.size();
     size_t pos = 2;
-    while (pos < line.size()) {
+
+    while (pos < len) {
         // 跳过空白
-        while (pos < line.size() && (line[pos] == ' ' || line[pos] == '\t')) pos++;
+        while (pos < len && (data[pos] == ' ' || data[pos] == '\t')) pos++;
         size_t keyStart = pos;
         // 找 '='
-        while (pos < line.size() && line[pos] != '=' && line[pos] != ' ') pos++;
-        if (pos >= line.size() || line[pos] != '=' || pos == keyStart) {
-            // 没有 '='，跳过这个 token
-            while (pos < line.size() && line[pos] != ' ') pos++;
+        while (pos < len && data[pos] != '=' && data[pos] != ' ') pos++;
+        if (pos >= len || data[pos] != '=' || pos == keyStart) {
+            while (pos < len && data[pos] != ' ') pos++;
             continue;
         }
-        std::string key = line.substr(keyStart, pos - keyStart);
+        // 创建 key string（不可避免，map 键类型要求）
+        std::string key(data + keyStart, pos - keyStart);
         pos++; // 跳过 '='
-        // 读取 value（整数）
+        // 直接解析整数，不创建临时 string
         size_t valStart = pos;
-        while (pos < line.size() && line[pos] != ' ') pos++;
+        while (pos < len && data[pos] != ' ') pos++;
         if (pos > valStart) {
-            std::string valStr = line.substr(valStart, pos - valStart);
-            try {
-                dict[key] = std::stoll(valStr);
-            } catch (...) {
-                // 不是数字则跳过
-            }
+            dict[key] = parseIntFast(data + valStart, pos - valStart);
         }
     }
     return dict;
