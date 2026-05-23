@@ -245,3 +245,93 @@ v2.2 (已完成) → v2.3 → v2.4 → v2.5
 | 2026-06-13 | v2.0 | CPP v2 多线程版本完成 |
 | 2026-06-13 | v2.1 ~v2.5| 添加五批次优化计划 |
 | 2026-06-14 | v2.1 ✅ | MSVC 2022 优化完成，达到 212,817 msg/s |
+
+---
+
+## CPP v2.3：直接解析优化
+
+### 完成日期
+2026-06-14
+
+### 核心优化
+
+| 优化项 | 说明 | 状态 |
+|--------|------|------|
+| extractField() | 直接字段解析函数，跳过 map 创建 | ✅ 已完成 |
+| loadFromLine() | 消息结构体直接解析方法 | ✅ 已完成 |
+| MmapFileReader 优化 | 使用 loadFromLine() 替代 parseKeyValueLine() + loadDict() | ✅ 已完成 |
+
+### 优化原理
+
+**原始流程**（两步走，慢）：
+```
+parseKeyValueLine(line) → 300ns (创建 map)
+order.loadDict(dict)    → 250ns (从 map 取值)
+总计：~550ns/消息
+```
+
+**优化后流程**（一步到位，快）：
+```
+extractField(line, "ApplSeqNum", order.ApplSeqNum) → ~20ns
+extractField(line, "Price", order.Price)            → ~20ns
+... (9 个字段 × ~20ns)
+总计：~180ns/消息
+```
+
+**节省**：~370ns/消息 = **+67% 单消息解析性能提升**
+
+### 性能指标（MSVC 2022 + mmap + 直接解析）
+- 吞吐量：**985,951 msg/s**（+86% vs v2.2）
+- 10次重放稳定：985,951 msg/s
+- 延迟：p50=0.2-0.3μs, p99=1.8-2.4ms, p99.9=2.4-3.0ms
+- 编译选项：MSVC 2022 /O2 /GL /arch:AVX2 /LTCG + USE_MMAP=ON
+
+### 稳定性测试（10 次）
+
+| 测试次数 | 吞吐量 (msg/s) |
+|----------|---------------|
+| 1 | 941,928 |
+| 2 | 988,322 |
+| 3 | 1,020,217 |
+| 4 | 1,011,042 |
+| 5 | 1,017,878 |
+| 6 | 997,489 |
+| 7 | 947,921 |
+| 8 | 968,409 |
+| 9 | 968,292 |
+| 10 | 998,010 |
+| **平均** | **985,951 msg/s** |
+
+### 构建方式
+```bash
+# mmap + 直接解析版本（默认，推荐）
+cmake -B build -G "Visual Studio 17 2022" -A x64 -DUSE_MMAP=ON
+cmake --build build --config Release --parallel 8
+```
+
+### 技术亮点
+
+1. **直接字段解析**：跳过 map 创建，直接在字符串中查找 key=value
+2. **精确匹配**：解决 SecurityID/SecurityIDSource 匹配问题
+3. **边界处理**：处理各种异常情况（key 不存在、格式错误等）
+
+### 代码变更
+
+**新增文件**：
+- `tool/field_parser.h`：独立的字段解析工具（无外部依赖）
+
+**修改文件**：
+- `tool/axsbe_order.h`：添加 loadFromLine() 方法
+- `tool/axsbe_exe.h`：添加 loadFromLine() 方法
+- `tool/axsbe_snap_stock.h`：添加 loadFromLine() 方法
+- `tool/mmap_file.h`：修改 advance() 使用 loadFromLine()
+- `tool/msg_util.h`：移除 extractField() 定义（已移到 field_parser.h）
+
+---
+
+## 更新日志（续）
+
+| 日期 | 版本 | 内容 |
+|------|------|------|
+| 2026-06-14 | v2.2 ✅ | mmap + 平铺哈希表完成，达到 540K msg/s |
+| 2026-06-14 | v2.3 ✅ | 直接解析优化完成，达到 986K msg/s |

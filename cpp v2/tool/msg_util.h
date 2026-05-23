@@ -7,6 +7,8 @@
 #include <string>
 #include <sstream>
 #include <unordered_map>
+#include <cstring>
+#include <cstdlib>
 
 // =====================================================================
 //  文件读取器 + CYB 价格笼子公式

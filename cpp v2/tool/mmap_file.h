@@ -198,11 +198,9 @@ private:
 #include "axsbe_order.h"
 #include "axsbe_exe.h"
 #include "axsbe_snap_stock.h"
+#include "field_parser.h"
 #include <unordered_map>
 #include <string>
-
-// 前向声明：复用 msg_util.cpp 中的 parseKeyValueLine
-std::unordered_map<std::string, int64_t> parseKeyValueLine(const std::string& line);
 
 class MmapFileReader {
 public:
@@ -274,28 +272,28 @@ private:
                 continue;
             }
 
-            // 解析键值对
-            auto dict = parseKeyValueLine(line);
-            if (dict.find("MsgType") == dict.end()) {
+            // [v2.3] 直接解析优化：跳过 parseKeyValueLine，直接提取 MsgType
+            // 然后使用 loadFromLine() 直接解析字段
+            int64_t msgType = 0;
+            if (!extractField(line.c_str(), "MsgType", msgType)) {
                 continue;
             }
 
-            int msgType = static_cast<int>(dict["MsgType"]);
-            currentType_ = msgType;
+            currentType_ = static_cast<int>(msgType);
 
             if (msgType == MsgType_order) {
                 currentOrder_ = AxsbeOrder{};
-                currentOrder_.loadDict(dict);
+                currentOrder_.loadFromLine(line.c_str());
                 hasNext_ = true;
                 return;
             } else if (msgType == MsgType_exe) {
                 currentExe_ = AxsbeExe{};
-                currentExe_.loadDict(dict);
+                currentExe_.loadFromLine(line.c_str());
                 hasNext_ = true;
                 return;
             } else if (msgType == MsgType_snap) {
                 currentSnap_ = AxsbeSnapStock{};
-                currentSnap_.loadDict(dict);
+                currentSnap_.loadFromLine(line.c_str());
                 hasNext_ = true;
                 return;
             }

@@ -1,5 +1,6 @@
 #pragma once
 #include "axsbe_base.h"
+#include "field_parser.h"
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -87,6 +88,101 @@ struct AxsbeSnapStock {
                 snprintf(keyQ, sizeof(keyQ), "AskLevel[%d].Qty",   i);
                 ask[i].Price = dict.at(keyP);
                 ask[i].Qty   = dict.at(keyQ);
+            }
+        }
+    }
+
+    // [v2.3] 直接从行字符串解析，跳过 dict 创建
+    void loadFromLine(const char* line) {
+        int64_t value;
+
+        // 解析 SecurityIDSource
+        const char* srcPos = strstr(line, "SecurityIDSource=");
+        if (srcPos) {
+            char* endPtr = nullptr;
+            secSrc = static_cast<SecurityIDSource>(strtoll(srcPos + 17, &endPtr, 10));
+        }
+
+        // 解析独立的 SecurityID
+        const char* idPos = strstr(line, "SecurityID=");
+        if (idPos) {
+            bool isSecurityIDSource = (idPos > line + 6) && (strncmp(idPos - 6, "Source", 6) == 0);
+            if (!isSecurityIDSource) {
+                char* endPtr = nullptr;
+                securityID = static_cast<int>(strtoll(idPos + 11, &endPtr, 10));
+            }
+        }
+
+        // 解析 ChannelNo
+        if (extractField(line, "ChannelNo", value))
+            ChannelNo = static_cast<uint16_t>(value);
+
+        // 解析 SZSE 特有字段
+        if (secSrc == SecurityIDSource_SZSE) {
+            if (extractField(line, "TradingPhase", value))
+                TradingPhaseCode = static_cast<uint8_t>(value);
+
+            if (extractField(line, "NumTrades", value))
+                NumTrades = value;
+
+            if (extractField(line, "TotalVolumeTrade", value))
+                TotalVolumeTrade = value;
+
+            if (extractField(line, "TotalValueTrade", value))
+                TotalValueTrade = value;
+
+            if (extractField(line, "PrevClosePx", value))
+                PrevClosePx = value;
+
+            if (extractField(line, "LastPx", value))
+                LastPx = value;
+
+            if (extractField(line, "OpenPx", value))
+                OpenPx = value;
+
+            if (extractField(line, "HighPx", value))
+                HighPx = value;
+
+            if (extractField(line, "LowPx", value))
+                LowPx = value;
+
+            if (extractField(line, "BidWeightPx", value))
+                BidWeightPx = value;
+
+            if (extractField(line, "BidWeightSize", value))
+                BidWeightSize = value;
+
+            if (extractField(line, "AskWeightPx", value))
+                AskWeightPx = value;
+
+            if (extractField(line, "AskWeightSize", value))
+                AskWeightSize = value;
+
+            if (extractField(line, "UpLimitPx", value))
+                UpLimitPx = value;
+
+            if (extractField(line, "DnLimitPx", value))
+                DnLimitPx = value;
+
+            if (extractField(line, "TransactTime", value))
+                TransactTime = static_cast<uint64_t>(value);
+
+            // 解析 10 档盘口
+            for (int i = 0; i < 10; i++) {
+                char keyP[32], keyQ[32];
+                snprintf(keyP, sizeof(keyP), "BidLevel[%d].Price", i);
+                snprintf(keyQ, sizeof(keyQ), "BidLevel[%d].Qty",   i);
+                if (extractField(line, keyP, value))
+                    bid[i].Price = value;
+                if (extractField(line, keyQ, value))
+                    bid[i].Qty = value;
+
+                snprintf(keyP, sizeof(keyP), "AskLevel[%d].Price", i);
+                snprintf(keyQ, sizeof(keyQ), "AskLevel[%d].Qty",   i);
+                if (extractField(line, keyP, value))
+                    ask[i].Price = value;
+                if (extractField(line, keyQ, value))
+                    ask[i].Qty = value;
             }
         }
     }

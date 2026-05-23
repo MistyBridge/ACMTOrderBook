@@ -1,5 +1,6 @@
 #pragma once
 #include "axsbe_base.h"
+#include "field_parser.h"
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -37,6 +38,53 @@ struct AxsbeExe {
         LastQty        = dict.at("LastQty");
         ExecType       = static_cast<uint8_t>(dict.at("ExecType"));
         TransactTime   = static_cast<uint64_t>(dict.at("TransactTime"));
+    }
+
+    // [v2.3] 直接从行字符串解析，跳过 dict 创建
+    void loadFromLine(const char* line) {
+        int64_t value;
+
+        // 解析 SecurityIDSource
+        const char* srcPos = strstr(line, "SecurityIDSource=");
+        if (srcPos) {
+            char* endPtr = nullptr;
+            secSrc = static_cast<SecurityIDSource>(strtoll(srcPos + 17, &endPtr, 10));
+        }
+
+        // 解析独立的 SecurityID
+        const char* idPos = strstr(line, "SecurityID=");
+        if (idPos) {
+            bool isSecurityIDSource = (idPos > line + 6) && (strncmp(idPos - 6, "Source", 6) == 0);
+            if (!isSecurityIDSource) {
+                char* endPtr = nullptr;
+                securityID = static_cast<int>(strtoll(idPos + 11, &endPtr, 10));
+            }
+        }
+
+        // 解析其他字段
+        if (extractField(line, "ChannelNo", value))
+            ChannelNo = static_cast<uint16_t>(value);
+
+        if (extractField(line, "ApplSeqNum", value))
+            ApplSeqNum = static_cast<uint64_t>(value);
+
+        if (extractField(line, "BidApplSeqNum", value))
+            BidApplSeqNum = static_cast<uint64_t>(value);
+
+        if (extractField(line, "OfferApplSeqNum", value))
+            OfferApplSeqNum = static_cast<uint64_t>(value);
+
+        if (extractField(line, "LastPx", value))
+            LastPx = value;
+
+        if (extractField(line, "LastQty", value))
+            LastQty = value;
+
+        if (extractField(line, "ExecType", value))
+            ExecType = static_cast<uint8_t>(value);
+
+        if (extractField(line, "TransactTime", value))
+            TransactTime = static_cast<uint64_t>(value);
     }
 
     // ---- 辅助方法 ----
