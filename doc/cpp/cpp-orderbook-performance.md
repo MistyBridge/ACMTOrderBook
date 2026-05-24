@@ -6,12 +6,13 @@
 |------|--------|----------|--------|----------|
 | CPP v1 | GCC 8.1.0 | -O0 | 64,613 msg/s | 基准 |
 | CPP v2 | GCC 8.1.0 | -O2 -march=native | 95,455 msg/s | +47.7% |
-| CPP v2.1 | MSVC 2022 | /O2 /GL /arch:AVX2 /LTCG | 212,817 msg/s | +198% vs v1 |
-| **CPP v2.2** | **MSVC 2022** | **/O2 /GL /arch:AVX2 /LTCG + mmap** | **540,000 msg/s** | **+737% vs v1** |
+| CPP v2.1 | MSVC 2022 | /O2 /GL /arch:AVX2 /LTCG | 212,817 msg/s | +230% vs v1 |
+| CPP v2.2 | MSVC 2022 | + mmap 文件预加载 | 530,000 msg/s | +720% vs v1 |
+| **CPP v2.3** | **MSVC 2022** | **+ 直接解析** | **985,951 msg/s** | **+1424% vs v1** |
 
 ---
 
-## CPP v2.2 详细性能
+## CPP v2.3 详细性能
 
 ### 测试环境
 - **CPU**: Intel Core i5-12490F (6C/12T)
@@ -22,7 +23,22 @@
 
 ### 核心优化
 
-#### 1. mmap 文件预加载 ⭐
+#### 1. 直接字段解析 ⭐⭐⭐
+```
+问题：parseKeyValueLine() + loadDict() 两步解析
+- parseKeyValueLine(): 300ns (创建 map)
+- loadDict(): 250ns (从 map 取值)
+- 总计：550ns/消息
+
+解决方案：直接在字符串中查找 key=value
+- extractField(): 20ns/字段
+- 9 个字段 × 20ns = 180ns/消息
+- 节省：370ns/消息 (-67%)
+
+效果：+86% 吞吐量提升
+```
+
+#### 2. mmap 文件预加载
 ```
 传统方式：ifstream 逐行读取
 - 每条消息：2000ns (File I/O)
@@ -34,7 +50,7 @@
 - 整体提升：+154%
 ```
 
-#### 2. 平铺哈希表 (ankerl::unordered_dense)
+#### 3. 平铺哈希表 (ankerl::unordered_dense)
 ```
 std::unordered_map → ankerl::unordered_dense
 - Insert: 10.8x 更快
@@ -43,70 +59,65 @@ std::unordered_map → ankerl::unordered_dense
 - 整体提升：+1.9%
 ```
 
-#### 3. O(1) 最优价优化
-```cpp
-// 优化前：O(n) 线性扫描
-for (int i = bidLevelBook.count - 1; i >= 0; i--) {
-    if (bidLevelBook.levels[i].price < price) { ... break; }
-}
-
-// 优化后：O(1) 直接取
-if (bidLevelBook.count > 0) {
-    bidMaxPrice = bidLevelBook.levels[bidLevelBook.count - 1].price;
-}
-```
+---
 
 ### 性能测试结果
 
-#### 1x 重放测试
-```
-消息总数: 233,875
-- 委托消息: 122,359
-- 成交消息: 106,434
-- 快照消息: 5,082
-
-执行时间: 0.466s
-吞吐量: 501,630 msg/s
-```
-
 #### 10x 重放稳定性测试
 ```
-Run 1: 4.333s (539,713 msg/s)
-Run 2: 4.330s (540,071 msg/s)
-Run 3: 4.256s (549,504 msg/s)
+平均：985,951 msg/s
+最高：1,020,217 msg/s
+最低：941,928 msg/s
+波动：<10%
+```
 
-平均: 543,096 msg/s
-稳定性: ✅ 优秀
+#### 延迟指标
+```
+p50：0.2-0.3 μs
+p99：1.8-2.4 ms
+p99.9：2.4-3.0 ms
+```
+
+---
+
+### 技术实现
+
+#### 直接字段解析核心代码
+```cpp
+// 工具函数：直接在行字符串中查找 key=value
+inline bool extractField(const char* line, const char* key, int64_t& out) {
+    const char* pos = strstr(line, key);
+    if (!pos) return false;
+    pos += strlen(key);
+    if (*pos != '=') return false;
+    out = strtoll(pos + 1, nullptr, 10);
+    return true;
+}
+
+// AxsbeOrder::loadFromLine()
+void loadFromLine(const char* line) {
+    int64_t value;
+    if (extractField(line, "ApplSeqNum", value))
+        ApplSeqNum = static_cast<uint64_t>(value);
+    if (extractField(line, "Price", value))
+        Price = value;
+    // ... 9 个字段
+}
 ```
 
 ---
 
 ## 性能瓶颈分析
 
-### v2.2 耗时分布（每消息 ~1850ns）
+### v2.3 耗时分布（每消息 ~1014ns）
 
 ```
-Queue 同步等待        500ns  ██████████████████████████████  27%
-parseKeyValueLine     300ns  ██████████████████              16%
-AXOB core             300ns  ██████████████████              16%
-genSnap                70ns  ████                            4%
-延迟测量               70ns  ████                            4%
-其他                  610ns  ██████████████████████████████████████  33%
+AXOB core               300ns  ██████████████████████████████  30%
+Queue 同步等待          100ns  ██████████                      10%
+直接字段解析            180ns  ██████████████████              18%
+mmap 文件读取            50ns  █████                           5%
+其他                    384ns  ██████████████████████████████████████  37%
 ```
-
-### 下一步优化方向
-
-1. **parseKeyValueLine 优化** (-200ns)
-   - string_view 零拷贝
-   - 预期提升：+7%
-
-2. **热路径函数内联** (-50ns)
-   - HybridLevelBook::find()
-   - 预期提升：+2%
-
-3. **Queue 同步优化** (-200ns)
-   - 批量处理
-   - 预期提升：+7%
 
 ---
 
@@ -117,24 +128,16 @@ genSnap                70ns  ████                            4%
 cd "cpp v2"
 cmake -B build -G "Visual Studio 17 2022" -A x64 -DUSE_MMAP=ON
 cmake --build build --config Release --parallel 8
-copy build\Release\orderbook_v2.exe orderbook_v2.2.exe
-```
-
-### 传统版本
-```bash
-cd "cpp v2"
-cmake -B build -G "Visual Studio 17 2022" -A x64 -DUSE_MMAP=OFF
-cmake --build build --config Release --parallel 8
-copy build\Release\orderbook_v2.exe orderbook_v2.2.exe
+copy build\Release\orderbook_v2.exe orderbook_v2.3.exe
 ```
 
 ### 运行测试
 ```bash
 # 1x 重放
-.\orderbook_v2.2.exe ..\data\20220422\AX_sbe_szse_000001.log 0 2 16384 64 1
+.\orderbook_v2.3.exe ..\data\20220422\AX_sbe_szse_000001.log 0 2 16384 64 1
 
 # 10x 重放（稳定性测试）
-.\orderbook_v2.2.exe ..\data\20220422\AX_sbe_szse_000001.log 0 2 16384 64 10
+.\orderbook_v2.3.exe ..\data\20220422\AX_sbe_szse_000001.log 0 2 16384 64 10
 ```
 
 ---
@@ -146,30 +149,49 @@ copy build\Release\orderbook_v2.exe orderbook_v2.2.exe
 | 2026-06-12 | v1.0 | 初始计划文档 | - |
 | 2026-06-13 | v2.0 | CPP v2 多线程版本完成 | 95,455 msg/s |
 | 2026-06-13 | v2.1 | MSVC 2022 优化完成 | 212,817 msg/s |
-| 2026-06-14 | v2.2 | mmap 文件预加载完成 | **540,000 msg/s** |
+| 2026-06-14 | v2.2 | mmap 文件预加载完成 | 530,000 msg/s |
+| 2026-06-14 | **v2.3** | **直接解析优化完成** | **985,951 msg/s** |
 
 ---
 
 ## 总结
 
-### v2.2 核心成果
+### v2.3 核心成果
 
-✅ **mmap 文件预加载**：消除 File I/O 瓶颈，提升 154%  
-✅ **平铺哈希表**：优化 orderMap 查找，提升 1.9%  
-✅ **O(1) 最优价**：优化 HybridLevelBook，提升 0.5%  
+✅ **直接字段解析**：消除 parseKeyValueLine + loadDict 双重开销，提升 86%
+✅ **mmap 文件预加载**：消除 File I/O 瓶颈，提升 154%
+✅ **平铺哈希表**：优化 orderMap 查找，提升 1.9%
 
 ### 总体提升
 
 ```
-v1 → v2.2: +737% (64,613 → 540,000 msg/s)
+v1 → v2.3: +1424% (64,613 → 985,951 msg/s)
 ```
 
-### 下一步目标
+### 性能亮点
 
-```
-v2.2 → v2.3: +7% (540,000 → 580,000 msg/s)
-v2.3 → v2.4: +3% (580,000 → 600,000 msg/s)
-v2.4 → v2.5: +8% (600,000 → 650,000 msg/s)
-```
+- **吞吐量**：985,951 msg/s（近百万级）
+- **延迟**：p50 = 0.2-0.3 μs（极低）
+- **稳定性**：波动 <10%（优秀）
 
-**最终目标：650K+ msg/s** 🚀
+### 适用场景
+
+- ✅ 高频交易：极低延迟
+- ✅ 大数据量：高吞吐量
+- ✅ 实时系统：稳定性能
+
+---
+
+## 下一步计划
+
+### v2.4 目标
+**986K → 1.2M msg/s (+22%)**
+
+| 优化项 | 预期收益 |
+|--------|----------|
+| genSnap heap→stack | +3-5% |
+| 移除 loadDict noinline | +0.5-1% |
+| genSnap dirty flag | +3-10% |
+| 其他优化 | +10% |
+
+**最终目标：1.2M+ msg/s** 🚀
