@@ -12,7 +12,8 @@
 | CPP v1 | ✅ 已完成 | 单线程版本，基础 C++ 重写 |
 | CPP v2 | ✅ 已完成 | 多线程优化版本（生产者-消费者架构） |
 | CPP v2.1 | ✅ 已完成 | MSVC 2022 编译优化 + HybridLevelBook |
-| CPP v2.2 | ✅ 已完成 | mmap 文件预加载 + 平铺哈希表 (540K msg/s) |
+| CPP v2.2 | ✅ 已完成 | mmap 文件预加载 + 平铺哈希表 (530K msg/s) |
+| CPP v2.3 | ✅ 已完成 | 直接字段解析优化 (986K msg/s) |
 
 ---
 
@@ -110,16 +111,44 @@ cmake --build build --config Release --parallel 8
 
 ---
 
-## CPP v2.3~v2.5：进一步优化计划（待定）
+## CPP v2.3：直接字段解析优化
+
+### 完成日期
+2026-06-14
+
+### 核心优化
+
+| 优化项 | 说明 | 状态 |
+|--------|------|------|
+| 直接字段解析 | 跳过 parseKeyValueLine + loadDict，直接提取字段 | ✅ 已完成 |
+| field_parser.h | extractField() 函数，直接在字符串中查找 key=value | ✅ 已完成 |
+| loadFromLine() | AxsbeOrder/Exe/Snap 直接解析方法 | ✅ 已完成 |
+
+### 性能指标（MSVC 2022 + mmap + 直接解析）
+- 吞吐量：**985,951 msg/s**（+86% vs v2.2，+1424% vs v1）
+- 10次重放稳定：941,928 - 1,020,217 msg/s
+- 延迟：p50=0.2-0.3μs, p99=1.8-2.4ms
+- 编译选项：MSVC 2022 /O2 /GL /arch:AVX2 /LTCG + USE_MMAP=ON
+
+### 构建方式
+```bash
+cmake -B build -G "Visual Studio 17 2022" -A x64 -DUSE_MMAP=ON
+cmake --build build --config Release --parallel 8
+copy build\Release\orderbook_v2.exe orderbook_v2.3.exe
+```
+
+---
+
+## CPP v2.4~v2.5：进一步优化计划（待定）
 
 ### 目标
-在 v2.2 基础上继续优化，目标 **600K+ msg/s**
+在 v2.3 基础上继续优化，目标 **1.2M+ msg/s**
 
 ### 总体路线图
 
 ```
-v2.2 (已完成) → v2.3 → v2.4 → v2.5
-    540K        580K    600K    650K
+v2.3 (已完成) → v2.4 → v2.5
+    986K        1.1M    1.2M
 ```
 
 ---
@@ -213,7 +242,8 @@ v2.2 (已完成) → v2.3 → v2.4 → v2.5
 | CPP v2 (GCC) | - | 95,455 msg/s | 233K 消息 | +47.7% |
 | CPP v2.1 (MSVC) | 160K | **212,817 msg/s** | 233K 消息 | +198% vs v1 |
 | CPP v2.1 (10x) | - | **214,644 msg/s** | 233K×10 消息 | 稳定 |
-| **CPP v2.2 (mmap)** | **300K** | **540,000 msg/s** | 233K×10 消息 | **+737% vs v1** |
+| CPP v2.2 (mmap) | 300K | **540,000 msg/s** | 233K×10 消息 | +737% vs v1 |
+| **CPP v2.3 (直接解析)** | **600K** | **985,951 msg/s** | 233K×10 消息 | **+1424% vs v1** |
 
 ### 测试环境
 - CPU: Intel Core i5-12490F (6C/12T)
@@ -245,6 +275,8 @@ v2.2 (已完成) → v2.3 → v2.4 → v2.5
 | 2026-06-13 | v2.0 | CPP v2 多线程版本完成 |
 | 2026-06-13 | v2.1 ~v2.5| 添加五批次优化计划 |
 | 2026-06-14 | v2.1 ✅ | MSVC 2022 优化完成，达到 212,817 msg/s |
+| 2026-06-14 | v2.2 ✅ | mmap 文件预加载完成，达到 530,000 msg/s |
+| 2026-06-14 | v2.3 ✅ | 直接字段解析优化完成，达到 985,951 msg/s |
 
 ---
 
