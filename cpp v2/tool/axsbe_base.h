@@ -9,6 +9,77 @@ enum SecurityIDSource : uint8_t {
     SecurityIDSource_SZSE = 102,
 };
 
+// =====================================================================
+//  消息基类模板
+//
+//  [v2.3] 代码模板化重构
+//  提取通用的 SecurityIDSource/SecurityID 解析逻辑，减少代码重复
+//
+//  使用方式：
+//    class AxsbeOrder : public AxsbeMessageBase<AxsbeOrder> {
+//    public:
+//        // 其他字段
+//        void loadFromLineImpl(const char* line) {
+//            // 只需要解析特定字段
+//        }
+//    };
+// =====================================================================
+
+template<typename Derived>
+class AxsbeMessageBase {
+public:
+    SecurityIDSource secSrc;
+    int securityID;
+
+    // 构造函数初始化
+    AxsbeMessageBase() : secSrc(SecurityIDSource_NULL), securityID(0) {}
+    AxsbeMessageBase(SecurityIDSource src, int id) : secSrc(src), securityID(id) {}
+
+    // 通用的 loadFromLine 实现
+    // 调用派生类的 loadFromLineImpl() 实现特定字段解析
+    void loadFromLine(const char* line) {
+        // 调用通用解析（SecurityIDSource/SecurityID）
+        loadFromLineCommon(line);
+        // 调用派生类特定解析
+        static_cast<Derived*>(this)->loadFromLineImpl(line);
+    }
+
+protected:
+    // 通用的 SecurityIDSource/SecurityID 解析
+    void loadFromLineCommon(const char* line) {
+        // SecurityIDSource 解析
+        const char* srcPos = strstr(line, "SecurityIDSource=");
+        if (srcPos) {
+            char* endPtr = nullptr;
+            int64_t value = strtoll(srcPos + 17, &endPtr, 10);
+            if (endPtr != srcPos + 17) {
+                secSrc = static_cast<SecurityIDSource>(value);
+            }
+        }
+
+        // SecurityID 解析（需要排除 SecurityIDSource）
+        const char* idPos = strstr(line, "SecurityID=");
+        if (idPos) {
+            // 确保不是 SecurityIDSource 的一部分
+            bool isSource = (idPos > line + 6) &&
+                           (strncmp(idPos - 6, "Source", 6) == 0);
+            if (!isSource) {
+                char* endPtr = nullptr;
+                int64_t value = strtoll(idPos + 11, &endPtr, 10);
+                if (endPtr != idPos + 11) {
+                    securityID = static_cast<int>(value);
+                }
+            }
+        }
+    }
+
+    // 派生类实现此方法，用于解析特定字段
+    // 默认空实现
+    void loadFromLineImpl(const char* line) {
+        // 派生类可以覆盖此方法
+    }
+};
+
 // ==================== 消息类型 ====================
 enum MsgType : uint8_t {
     MsgType_exe             = 191,
