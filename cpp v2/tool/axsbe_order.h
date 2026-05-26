@@ -11,9 +11,9 @@
 //  深交所 MsgType=192, 48字节
 // =====================================================================
 
-struct AxsbeOrder {
-    SecurityIDSource secSrc = SecurityIDSource_NULL;
-    int      securityID = 0;
+struct AxsbeOrder : public AxsbeMessageBase<AxsbeOrder> {
+    // secSrc 和 securityID 已在基类中定义
+
     uint16_t ChannelNo  = 0;
     uint64_t ApplSeqNum = 0;
     int64_t  Price      = 0;     // 原始精度（深圳4位小数）
@@ -43,30 +43,11 @@ struct AxsbeOrder {
 
     // [v2.3] 直接从行字符串解析，跳过 dict 创建
     // 性能对比：loadDict() ~250ns vs loadFromLine() ~180ns
-    void loadFromLine(const char* line) {
+    // 注意：loadFromLine() 在基类中定义，这里实现 loadFromLineImpl()
+    void loadFromLineImpl(const char* line) {
         int64_t value;
 
-        // 注意：SecurityID 是 SecurityIDSource 的后缀，必须精确匹配
-        // 使用 strstr("SecurityIDSource=") 来查找
-        const char* srcPos = strstr(line, "SecurityIDSource=");
-        if (srcPos) {
-            char* endPtr = nullptr;
-            secSrc = static_cast<SecurityIDSource>(strtoll(srcPos + 17, &endPtr, 10));
-        }
-
-        // 查找独立的 "SecurityID="（不是 "SecurityIDSource=" 的一部分）
-        // 策略：查找 "SecurityID="，然后检查它前面不是 "Source"
-        const char* idPos = strstr(line, "SecurityID=");
-        if (idPos) {
-            // 检查前面是否有 "Source"（表示这是 SecurityIDSource 的一部分）
-            bool isSecurityIDSource = (idPos > line + 6) && (strncmp(idPos - 6, "Source", 6) == 0);
-            if (!isSecurityIDSource) {
-                char* endPtr = nullptr;
-                securityID = static_cast<int>(strtoll(idPos + 11, &endPtr, 10));
-            }
-        }
-
-        // 解析其他字段
+        // 解析特定字段
         if (extractField(line, "ChannelNo", value))
             ChannelNo = static_cast<uint16_t>(value);
 

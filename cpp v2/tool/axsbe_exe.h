@@ -11,9 +11,9 @@
 //  深交所 MsgType=191, 64字节
 // =====================================================================
 
-struct AxsbeExe {
-    SecurityIDSource secSrc = SecurityIDSource_NULL;
-    int      securityID      = 0;
+struct AxsbeExe : public AxsbeMessageBase<AxsbeExe> {
+    // secSrc 和 securityID 已在基类中定义
+
     uint16_t ChannelNo       = 0;
     uint64_t ApplSeqNum      = 0;
     uint64_t BidApplSeqNum   = 0;
@@ -41,27 +41,11 @@ struct AxsbeExe {
     }
 
     // [v2.3] 直接从行字符串解析，跳过 dict 创建
-    void loadFromLine(const char* line) {
+    // 注意：loadFromLine() 在基类中定义，这里实现 loadFromLineImpl()
+    void loadFromLineImpl(const char* line) {
         int64_t value;
 
-        // 解析 SecurityIDSource
-        const char* srcPos = strstr(line, "SecurityIDSource=");
-        if (srcPos) {
-            char* endPtr = nullptr;
-            secSrc = static_cast<SecurityIDSource>(strtoll(srcPos + 17, &endPtr, 10));
-        }
-
-        // 解析独立的 SecurityID
-        const char* idPos = strstr(line, "SecurityID=");
-        if (idPos) {
-            bool isSecurityIDSource = (idPos > line + 6) && (strncmp(idPos - 6, "Source", 6) == 0);
-            if (!isSecurityIDSource) {
-                char* endPtr = nullptr;
-                securityID = static_cast<int>(strtoll(idPos + 11, &endPtr, 10));
-            }
-        }
-
-        // 解析其他字段
+        // 解析特定字段
         if (extractField(line, "ChannelNo", value))
             ChannelNo = static_cast<uint16_t>(value);
 
