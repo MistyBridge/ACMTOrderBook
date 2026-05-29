@@ -111,7 +111,7 @@ cmake --build build --config Release --parallel 8
 
 ---
 
-## CPP v2.3：直接字段解析优化
+## CPP v2.3：直接字段解析优化 + 代码模板化重构
 
 ### 完成日期
 2026-06-14
@@ -123,9 +123,10 @@ cmake --build build --config Release --parallel 8
 | 直接字段解析 | 跳过 parseKeyValueLine + loadDict，直接提取字段 | ✅ 已完成 |
 | field_parser.h | extractField() 函数，直接在字符串中查找 key=value | ✅ 已完成 |
 | loadFromLine() | AxsbeOrder/Exe/Snap 直接解析方法 | ✅ 已完成 |
+| 代码模板化重构 | AxsbeMessageBase 模板基类，消除代码重复 | ✅ 已完成 |
 
 ### 性能指标（MSVC 2022 + mmap + 直接解析）
-- 吞吐量：**985,951 msg/s**（+86% vs v2.2，+1424% vs v1）
+- 吞吐量：**995,258 msg/s**（+87% vs v2.2，+1439% vs v1）
 - 10次重放稳定：941,928 - 1,020,217 msg/s
 - 延迟：p50=0.2-0.3μs, p99=1.8-2.4ms
 - 编译选项：MSVC 2022 /O2 /GL /arch:AVX2 /LTCG + USE_MMAP=ON
@@ -243,7 +244,7 @@ v2.3 (已完成) → v2.4 → v2.5
 | CPP v2.1 (MSVC) | 160K | **212,817 msg/s** | 233K 消息 | +198% vs v1 |
 | CPP v2.1 (10x) | - | **214,644 msg/s** | 233K×10 消息 | 稳定 |
 | CPP v2.2 (mmap) | 300K | **540,000 msg/s** | 233K×10 消息 | +737% vs v1 |
-| **CPP v2.3 (直接解析)** | **600K** | **985,951 msg/s** | 233K×10 消息 | **+1424% vs v1** |
+| **CPP v2.3 (直接解析+重构)** | **600K** | **995,258 msg/s** | 233K×10 消息 | **+1439% vs v1** |
 
 ### 测试环境
 - CPU: Intel Core i5-12490F (6C/12T)
@@ -277,6 +278,7 @@ v2.3 (已完成) → v2.4 → v2.5
 | 2026-06-14 | v2.1 ✅ | MSVC 2022 优化完成，达到 212,817 msg/s |
 | 2026-06-14 | v2.2 ✅ | mmap 文件预加载完成，达到 530,000 msg/s |
 | 2026-06-14 | v2.3 ✅ | 直接字段解析优化完成，达到 985,951 msg/s |
+| 2026-06-14 | v2.3 ✅ | 代码模板化重构完成，达到 995,258 msg/s |
 
 ---
 
