@@ -23,9 +23,6 @@ struct AxsbeOrder : public AxsbeMessageBase<AxsbeOrder> {
     uint64_t TransactTime = 0;
 
     // ---- 从 Key=Value 字典加载 ----
-#ifdef __GNUC__
-    __attribute__((noinline))
-#endif
     void loadDict(const std::unordered_map<std::string, int64_t>& dict) {
         secSrc      = static_cast<SecurityIDSource>(dict.at("SecurityIDSource"));
         securityID  = static_cast<int>(dict.at("SecurityID"));
