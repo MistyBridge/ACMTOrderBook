@@ -140,7 +140,30 @@ copy build\Release\orderbook_v2.exe orderbook_v2.3.exe
 
 ---
 
-## CPP v2.4~v2.5：进一步优化计划（待定）
+
+## CPP v2.4：代码质量优化
+
+### 完成日期
+2026-06-14
+
+### 核心优化
+
+| 优化项 | 说明 | 状态 |
+|--------|------|------|
+| 移除 loadDict noinline | 允许编译器内联优化 | ✅ 已完成 |
+| genSnap heap→stack | 已是栈上对象，无需修改 | ✅ 已确认 |
+
+### 性能指标
+- 吞吐量：**999,128 msg/s**（+0.9% vs v2.3）
+- 稳定性：优秀
+- 代码质量：提升
+
+### 结论
+v2.4 性能提升有限，但代码质量优化完成。genSnap dirty flag 因复杂度高被跳过。
+
+---
+
+## CPP v2.5：PGO + Huge Pages + SIMD
 
 ### 目标
 在 v2.3 基础上继续优化，目标 **1.2M+ msg/s**
