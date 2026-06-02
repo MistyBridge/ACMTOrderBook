@@ -110,6 +110,9 @@ void AXOB::onTrade(const ObExec& exec) {
             genSnap();
         }
     }
+
+    // [v2.7] 增量更新快照统计字段（~5ns），避免完整重建
+    updateSnapStats();
 }
 
 void AXOB::onCancel(const ObCancel& cancel) {

@@ -31,6 +31,7 @@
 #include <utility>
 
 #include "cache_line.h"
+#include "huge_pages.h"
 
 namespace axob {
 namespace core {
@@ -45,20 +46,26 @@ public:
     {
         assert(capacityHint > 0 && capacity_ >= 2);
 
-        // 分配对齐到 cache line 的缓冲区
+        // [v2.5] 分配缓冲区：优先使用大页（2MB），回退到 cache line 对齐
         size_t bytes = capacity_ * sizeof(T);
-        // aligned_alloc 要求 size 是 alignment 的整数倍；alignment=64, sizeof(T) 通常满足
-        // 为安全起见向上取整
         const size_t alignment = CACHELINE_SIZE;
         bytes = (bytes + alignment - 1) & ~(alignment - 1);
 
+        // 尝试大页分配（减少 TLB miss）
+        bufferBytes_ = bytes;
+        buffer_ = static_cast<T*>(allocLargePages(bytes));
+        if (buffer_) {
+            usedLargePages_ = true;
+        } else {
+            // 回退到对齐分配
+            usedLargePages_ = false;
 #ifdef _WIN32
-        buffer_ = static_cast<T*>(_aligned_malloc(bytes, alignment));
-        if (!buffer_) std::abort();
+            buffer_ = static_cast<T*>(_aligned_malloc(bytes, alignment));
 #else
-        buffer_ = static_cast<T*>(std::aligned_alloc(alignment, bytes));
-        if (!buffer_) std::abort();
+            buffer_ = static_cast<T*>(std::aligned_alloc(alignment, bytes));
 #endif
+            if (!buffer_) std::abort();
+        }
     }
 
     ~SPSCQueue() {
@@ -68,11 +75,16 @@ public:
         for (uint64_t i = r; i < w; ++i) {
             buffer_[i & mask_].~T();
         }
+        // [v2.5] 根据分配方式选择释放方法
+        if (usedLargePages_) {
+            freeLargePages(buffer_, bufferBytes_);
+        } else {
 #ifdef _WIN32
-        _aligned_free(buffer_);
+            _aligned_free(buffer_);
 #else
-        std::free(buffer_);
+            std::free(buffer_);
 #endif
+        }
     }
 
     // 禁止拷贝/移动
@@ -114,6 +126,32 @@ public:
         }
         writeIndexVal_.store(w + 1, std::memory_order_release);
         return true;
+    }
+
+    // ---------------------------------------------------------------
+    //  [v2.7] 原地构造入队（零拷贝）
+    //  在队列槽位上直接构造对象，避免中间拷贝
+    //  用法：
+    //    T* slot = queue.try_emplace_slot();
+    //    if (slot) {
+    //        slot->loadFromLine(line);  // 直接在槽位上构造
+    //        queue.commit_push();       // 提交入队
+    //    }
+    // ---------------------------------------------------------------
+    T* try_emplace_slot() {
+        const uint64_t w = writeIndexVal_.load(std::memory_order_relaxed);
+        const uint64_t r = readIndexVal_.load(std::memory_order_acquire);
+        if (w - r >= capacity_) return nullptr;  // 满
+
+        // 默认构造槽位
+        new (&buffer_[w & mask_]) T();
+        return &buffer_[w & mask_];
+    }
+
+    void commit_push() {
+        // 递增写索引，使元素对消费者可见
+        const uint64_t w = writeIndexVal_.load(std::memory_order_relaxed);
+        writeIndexVal_.store(w + 1, std::memory_order_release);
     }
 
     // ---------------------------------------------------------------
@@ -239,7 +277,9 @@ private:
     const size_t capacity_;  // 缓冲区容量（2 的幂）
     const size_t mask_;      // capacity_ - 1，用于位掩模
 
-    T* buffer_;  // 环形缓冲区（cache line 对齐分配）
+    T* buffer_;              // 环形缓冲区
+    size_t bufferBytes_ = 0;     // [v2.5] 缓冲区字节数（用于大页释放）
+    bool usedLargePages_ = false; // [v2.5] 是否使用了大页分配
 
     // 写索引 —— 仅生产者线程写，独占 cache line
     // 直接使用 alignas 避免 CacheLinePadded 在 -O2 下的别名分析问题

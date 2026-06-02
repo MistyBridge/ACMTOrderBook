@@ -13,13 +13,23 @@ option(BUILD_BENCHMARK "Build hashmap benchmark" ON)
 # USE_FLAT_HASHMAP=0: std::unordered_map (默认)
 # USE_FLAT_HASHMAP=1: ankerl::unordered_dense::map (推荐，单头文件)
 # USE_FLAT_HASHMAP=2: phmap::flat_hash_map (Google abseil，SIMD 优化)
-set(USE_FLAT_HASHMAP 0 CACHE STRING "Flat hashmap implementation (0=std, 1=ankerl, 2=phmap)")
+set(USE_FLAT_HASHMAP 1 CACHE STRING "Flat hashmap implementation (0=std, 1=ankerl, 2=phmap)")
 set_property(CACHE USE_FLAT_HASHMAP PROPERTY STRINGS 0 1 2)
 
 # [v2.3] mmap 文件预加载选项
 # USE_MMAP=1: 启用 mmap 文件预加载（默认，推荐）
 # USE_MMAP=0: 使用传统 ifstream 逐行读取
 option(USE_MMAP "Use mmap for file I/O (v2.3 optimization)" ON)
+
+# [v2.5] PGO (Profile-Guided Optimization) 选项
+# PGO_MODE=OFF:  无 PGO（默认）
+# PGO_MODE=GEN:  生成 profile 数据（第一次编译）
+# PGO_MODE=USE:  使用 profile 数据优化（第二次编译）
+set(PGO_MODE OFF CACHE STRING "PGO mode (OFF/GEN/USE)")
+set_property(CACHE PGO_MODE PROPERTY STRINGS OFF GEN USE)
+
+# Profile 数据目录
+set(PGO_PROFILE_DIR "${CMAKE_SOURCE_DIR}/pgo_profiles" CACHE STRING "PGO profile directory")
 
 # =====================================================================
 #  AXOrderBook v2 — 多线程订单簿撮合引擎  CMakeLists.txt
@@ -192,6 +202,48 @@ if(USE_MMAP)
     target_compile_definitions(orderbook_v2 PRIVATE USE_MMAP=1)
 else()
     target_compile_definitions(orderbook_v2 PRIVATE USE_MMAP=0)
+endif()
+
+# [v2.5] PGO 配置
+# MSVC PGO 需要 /GENPROFILE 和 /USEPROFILE
+# 注意：MSVC PGO 的 .pgc 文件默认生成在可执行文件同目录
+# 需要确保运行插桩版本后，.pgc 文件在正确位置
+if(PGO_MODE STREQUAL "GEN")
+    # 生成 profile 数据
+    message(STATUS "PGO mode: GENERATE profile data")
+    message(STATUS "  Profile data will be generated in build directory")
+    target_compile_definitions(orderbook_v2 PRIVATE PGO_GEN=1)
+
+    if(MSVC)
+        # MSVC: /GENPROFILE 启用插桩
+        # /GENPROFILE:emitprofdata 生成 .pgc 文件
+        target_compile_options(orderbook_v2 PRIVATE /GENPROFILE)
+        target_link_options(orderbook_v2 PRIVATE /GENPROFILE)
+    else()
+        # GCC/Clang: -fprofile-generate 启用插桩
+        target_compile_options(orderbook_v2 PRIVATE -fprofile-generate=${PGO_PROFILE_DIR})
+        target_link_options(orderbook_v2 PRIVATE -fprofile-generate=${PGO_PROFILE_DIR})
+    endif()
+
+    # 创建 profile 目录
+    file(MAKE_DIRECTORY ${PGO_PROFILE_DIR})
+
+elseif(PGO_MODE STREQUAL "USE")
+    # 使用 profile 数据优化
+    message(STATUS "PGO mode: USE profile data from ${PGO_PROFILE_DIR}")
+
+    if(MSVC)
+        # MSVC: /USEPROFILE 使用 profile 数据
+        # 需要确保 .pgc 文件在可执行文件目录
+        target_compile_options(orderbook_v2 PRIVATE /USEPROFILE)
+        target_link_options(orderbook_v2 PRIVATE /USEPROFILE)
+    else()
+        # GCC/Clang: -fprofile-use 使用 profile 数据
+        target_compile_options(orderbook_v2 PRIVATE -fprofile-use=${PGO_PROFILE_DIR})
+        target_link_options(orderbook_v2 PRIVATE -fprofile-use=${PGO_PROFILE_DIR})
+    endif()
+else()
+    message(STATUS "PGO mode: OFF")
 endif()
 
 # 编译选项

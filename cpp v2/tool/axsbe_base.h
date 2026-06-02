@@ -1,5 +1,7 @@
 #pragma once
 #include <cstdint>
+#include <cstring>   // memcmp, strncmp [v2.6]
+#include <cstdlib>   // strtoll [v2.6]
 #include <string>
 
 // ==================== 交易所代码 ====================
@@ -44,7 +46,59 @@ public:
         static_cast<Derived*>(this)->loadFromLineImpl(line);
     }
 
+    // [v2.6] 零分配版本 — 接受 (ptr, end) 对，避免 std::string 分配
+    void loadFromLine(const char* lineStart, const char* lineEnd) {
+        loadFromLineCommon(lineStart, lineEnd);
+        static_cast<Derived*>(this)->loadFromLineImpl(lineStart, lineEnd);
+    }
+
 protected:
+    // [v2.6] 零分配版通用解析（内联，避免循环依赖 field_parser.h）
+    // 手动整数解析，不修改源内存（mmap 只读安全）
+    void loadFromLineCommon(const char* lineStart, const char* lineEnd) {
+        // SecurityIDSource 解析
+        const char* srcKey = "SecurityIDSource=";
+        const size_t srcKeyLen = 17;
+        for (const char* p = lineStart; p + srcKeyLen <= lineEnd; ++p) {
+            if (*p == 'S' && memcmp(p, srcKey, srcKeyLen) == 0) {
+                const char* valStart = p + srcKeyLen;
+                if (valStart < lineEnd) {
+                    int64_t val = 0;
+                    bool neg = false;
+                    const char* vp = valStart;
+                    if (*vp == '-') { neg = true; ++vp; }
+                    while (vp < lineEnd && *vp >= '0' && *vp <= '9') {
+                        val = val * 10 + (*vp - '0'); ++vp;
+                    }
+                    if (vp > valStart + (neg ? 1 : 0))
+                        secSrc = static_cast<SecurityIDSource>(neg ? -val : val);
+                }
+                break;
+            }
+        }
+        // SecurityID 解析（排除 SecurityIDSource）
+        const char* idKey = "SecurityID=";
+        const size_t idKeyLen = 11;
+        for (const char* p = lineStart; p + idKeyLen <= lineEnd; ++p) {
+            if (*p == 'S' && memcmp(p, idKey, idKeyLen) == 0) {
+                bool isSource = (p >= lineStart + 6) && (memcmp(p - 6, "Source", 6) == 0);
+                if (!isSource) {
+                    const char* valStart = p + idKeyLen;
+                    if (valStart < lineEnd) {
+                        int64_t val = 0;
+                        const char* vp = valStart;
+                        while (vp < lineEnd && *vp >= '0' && *vp <= '9') {
+                            val = val * 10 + (*vp - '0'); ++vp;
+                        }
+                        if (vp > valStart)
+                            securityID = static_cast<int>(val);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     // 通用的 SecurityIDSource/SecurityID 解析
     void loadFromLineCommon(const char* line) {
         // SecurityIDSource 解析

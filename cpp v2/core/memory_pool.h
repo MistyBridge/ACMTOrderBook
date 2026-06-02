@@ -27,6 +27,7 @@
 #include <new>
 #include <type_traits>
 #include <vector>
+#include "huge_pages.h"  // [v2.5] Large page support
 
 namespace axob {
 namespace core {
@@ -52,9 +53,13 @@ public:
     }
 
     ~MemoryPool() {
-        // 释放所有已分配的内存块
+        // [v2.5] 根据分配方式选择释放方法
         for (auto& blk : blocks_) {
-            alignedFree(blk.memory);
+            if (blk.usedLargePages) {
+                freeLargePages(blk.memory, blk.size);
+            } else {
+                alignedFree(blk.memory);
+            }
         }
     }
 
@@ -126,16 +131,25 @@ private:
     }
 
     // 分配 count 个 slot 的新内存块并将其全部链入空闲链表
+    // [v2.5] 优先使用大页分配，减少 TLB miss
     void allocateBlock(size_t count) {
         size_t blockBytes = count * slotSize_;
-        // 向上取整到 alignment 的倍数（aligned_alloc 要求）
         blockBytes = (blockBytes + alignment_ - 1) & ~(alignment_ - 1);
 
-        void* mem = alignedAlloc(blockBytes, alignment_);
-        if (!mem) std::abort();
+        // 尝试大页分配（仅当块足够大时，>= 64KB）
+        bool usedLP = false;
+        void* mem = nullptr;
+        if (blockBytes >= 65536) {
+            mem = allocLargePages(blockBytes);
+            if (mem) usedLP = true;
+        }
+        if (!mem) {
+            mem = alignedAlloc(blockBytes, alignment_);
+            if (!mem) std::abort();
+        }
         std::memset(mem, 0, blockBytes);  // 归零，确保指针字段初始为空
 
-        blocks_.push_back({mem, blockBytes});
+        blocks_.push_back({mem, blockBytes, usedLP});
 
         // 将新 block 中的所有 slot 串成链表，挂到 freeList_ 前端
         char* ptr = static_cast<char*>(mem);
@@ -184,6 +198,7 @@ private:
     struct Block {
         void*  memory;
         size_t size;
+        bool   usedLargePages;  // [v2.5]
     };
     std::vector<Block> blocks_;
 };

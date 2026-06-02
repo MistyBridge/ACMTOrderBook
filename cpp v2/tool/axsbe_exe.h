@@ -38,34 +38,37 @@ struct AxsbeExe : public AxsbeMessageBase<AxsbeExe> {
     }
 
     // [v2.3] 直接从行字符串解析，跳过 dict 创建
-    // 注意：loadFromLine() 在基类中定义，这里实现 loadFromLineImpl()
     void loadFromLineImpl(const char* line) {
         int64_t value;
-
-        // 解析特定字段
         if (extractField(line, "ChannelNo", value))
             ChannelNo = static_cast<uint16_t>(value);
-
         if (extractField(line, "ApplSeqNum", value))
             ApplSeqNum = static_cast<uint64_t>(value);
-
         if (extractField(line, "BidApplSeqNum", value))
             BidApplSeqNum = static_cast<uint64_t>(value);
-
         if (extractField(line, "OfferApplSeqNum", value))
             OfferApplSeqNum = static_cast<uint64_t>(value);
-
         if (extractField(line, "LastPx", value))
             LastPx = value;
-
         if (extractField(line, "LastQty", value))
             LastQty = value;
-
         if (extractField(line, "ExecType", value))
             ExecType = static_cast<uint8_t>(value);
-
         if (extractField(line, "TransactTime", value))
             TransactTime = static_cast<uint64_t>(value);
+    }
+
+    // [v2.6] 零分配版本
+    void loadFromLineImpl(const char* s, const char* e) {
+        int64_t value;
+        if (extractField(s, e, "ChannelNo", value))        ChannelNo = static_cast<uint16_t>(value);
+        if (extractField(s, e, "ApplSeqNum", value))       ApplSeqNum = static_cast<uint64_t>(value);
+        if (extractField(s, e, "BidApplSeqNum", value))    BidApplSeqNum = static_cast<uint64_t>(value);
+        if (extractField(s, e, "OfferApplSeqNum", value))  OfferApplSeqNum = static_cast<uint64_t>(value);
+        if (extractField(s, e, "LastPx", value))           LastPx = value;
+        if (extractField(s, e, "LastQty", value))          LastQty = value;
+        if (extractField(s, e, "ExecType", value))         ExecType = static_cast<uint8_t>(value);
+        if (extractField(s, e, "TransactTime", value))     TransactTime = static_cast<uint64_t>(value);
     }
 
     // ---- 辅助方法 ----

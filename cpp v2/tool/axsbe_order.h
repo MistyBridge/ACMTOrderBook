@@ -39,35 +39,39 @@ struct AxsbeOrder : public AxsbeMessageBase<AxsbeOrder> {
     }
 
     // [v2.3] 直接从行字符串解析，跳过 dict 创建
-    // 性能对比：loadDict() ~250ns vs loadFromLine() ~180ns
-    // 注意：loadFromLine() 在基类中定义，这里实现 loadFromLineImpl()
     void loadFromLineImpl(const char* line) {
         int64_t value;
-
-        // 解析特定字段
         if (extractField(line, "ChannelNo", value))
             ChannelNo = static_cast<uint16_t>(value);
-
         if (extractField(line, "ApplSeqNum", value))
             ApplSeqNum = static_cast<uint64_t>(value);
-
-        // 解析 Price, OrderQty, Side, TransactTime, OrdType
-        // 注意：这些字段只在 SZSE 消息中存在
         if (secSrc == SecurityIDSource_SZSE) {
             if (extractField(line, "Price", value))
                 Price = value;
-
             if (extractField(line, "OrderQty", value))
                 OrderQty = static_cast<int32_t>(value);
-
             if (extractField(line, "Side", value))
                 Side = static_cast<uint8_t>(value);
-
             if (extractField(line, "TransactTime", value))
                 TransactTime = static_cast<uint64_t>(value);
-
             if (extractField(line, "OrdType", value))
                 OrdType = static_cast<uint8_t>(value);
+        }
+    }
+
+    // [v2.6] 零分配版本
+    void loadFromLineImpl(const char* s, const char* e) {
+        int64_t value;
+        if (extractField(s, e, "ChannelNo", value))
+            ChannelNo = static_cast<uint16_t>(value);
+        if (extractField(s, e, "ApplSeqNum", value))
+            ApplSeqNum = static_cast<uint64_t>(value);
+        if (secSrc == SecurityIDSource_SZSE) {
+            if (extractField(s, e, "Price", value))        Price = value;
+            if (extractField(s, e, "OrderQty", value))     OrderQty = static_cast<int32_t>(value);
+            if (extractField(s, e, "Side", value))          Side = static_cast<uint8_t>(value);
+            if (extractField(s, e, "TransactTime", value)) TransactTime = static_cast<uint64_t>(value);
+            if (extractField(s, e, "OrdType", value))      OrdType = static_cast<uint8_t>(value);
         }
     }
 

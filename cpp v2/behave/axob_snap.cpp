@@ -10,11 +10,13 @@ static int32_t fmtPx(int32_t price, InstrumentType instType, SecurityIDSource sr
 // 消息入口
 void AXOB::onMsg(const AxsbeSnapStock& msg) {
     if (msg.securityID != SecurityID) return;
+    ensureSnap();  // [v2.7] 验证前确保快照最新
     onSnap(msg);
     msgNb++;
 }
 
 void AXOB::onMsg(AXSignal signal) {
+    ensureSnap();  // [v2.7] 阶段切换前确保快照最新
     switch (signal) {
     case AXSignal::OPENCALL_END:
         if (bidMaxPrice < askMinPrice && tradingPhase == TPM::OpenCall) {
@@ -110,15 +112,27 @@ void AXOB::onSnap(const AxsbeSnapStock& snap) {
         tradingPhase = TPM::VolatilityBreaking;
         genSnap();
     }
+
+    // [v2.7] onSnap 修改了状态（closePxReady/tradingPhase），需要立即重建快照
+    ensureSnap();
 }
 
-// 根据交易阶段分发到对应快照生成器
+// [v2.7优化] genSnap 改为延迟标记（~2ns），不立即重建
+// 真正的重建由 ensureSnap() 完成
 void AXOB::genSnap() {
+    snapNeedsUpdate_ = true;
+}
+
+// [v2.7] 确保快照最新 — 仅在需要时完整重建（~225ns）
+void AXOB::ensureSnap() {
+    if (!snapNeedsUpdate_) return;
+    snapNeedsUpdate_ = false;
+
+    if (tradingPhase < TPM::OpenCall || tradingPhase > TPM::Ending) return;
+
     AxsbeSnapStock snap;
     snap.secSrc = secSrc;
     snap.securityID = SecurityID;
-
-    if (tradingPhase < TPM::OpenCall || tradingPhase > TPM::Ending) return;
 
     if (tradingPhase == TPM::OpenCall || tradingPhase == TPM::CloseCall) {
         snap = genCallSnap();
@@ -133,8 +147,19 @@ void AXOB::genSnap() {
 
     clipSnap(snap);
     snap._seq = msgNb;
-    // [v2.2优化] 直接赋值栈上对象，省掉 delete/new 堆分配
     lastSnap = snap;
+}
+
+// [v2.7] 增量更新统计字段（~5ns，不触发完整重建）
+void AXOB::updateSnapStats() {
+    lastSnap.LastPx = fmtPx(LastPx, instType, secSrc);
+    lastSnap.NumTrades = NumTrades;
+    lastSnap.TotalVolumeTrade = TotalVolumeTrade;
+    lastSnap.TotalValueTrade = TotalValueTrade;
+    int32_t h = fmtPx(HighPx, instType, secSrc);
+    int32_t l = fmtPx(LowPx, instType, secSrc);
+    if (h > lastSnap.HighPx) lastSnap.HighPx = h;
+    if (l < lastSnap.LowPx)  lastSnap.LowPx  = l;
 }
 
 // 集合竞价快照 — 虚拟撮合算法
