@@ -237,6 +237,62 @@ inline int32_t clipInt32(int64_t x) {
 
 #include <map>  // std::map 用于大 n 回退
 
+// [v2.6] 热点路径性能计数器（编译时可通过 #define DISABLE_PROFILING 关闭）
+#define DISABLE_PROFILING  // 移除 profiling 开销以获得最佳性能
+#ifndef DISABLE_PROFILING
+struct HotPathStats {
+    uint64_t find_cycles     = 0;
+    uint64_t find_count      = 0;
+    uint64_t insert_cycles   = 0;
+    uint64_t insert_count    = 0;
+    uint64_t erase_cycles    = 0;
+    uint64_t erase_count     = 0;
+    uint64_t modifyQty_cycles= 0;
+    uint64_t modifyQty_count = 0;
+    uint64_t memmove_bytes   = 0;
+    uint64_t genSnap_cycles  = 0;
+    uint64_t genSnap_count   = 0;
+    uint64_t fmtPx_cycles    = 0;
+    uint64_t fmtPx_count     = 0;
+    uint64_t orderMap_cycles = 0;
+    uint64_t orderMap_count  = 0;
+
+    void reset() { *this = HotPathStats{}; }
+    void print() const {
+        printf("[HotPath] find: %llu calls, avg %.1f cycles\n",
+               (unsigned long long)find_count,
+               find_count ? (double)find_cycles / find_count : 0.0);
+        printf("[HotPath] insert: %llu calls, avg %.1f cycles, memmove=%llu bytes\n",
+               (unsigned long long)insert_count,
+               insert_count ? (double)insert_cycles / insert_count : 0.0,
+               (unsigned long long)memmove_bytes);
+        printf("[HotPath] erase: %llu calls, avg %.1f cycles\n",
+               (unsigned long long)erase_count,
+               erase_count ? (double)erase_cycles / erase_count : 0.0);
+        printf("[HotPath] genSnap: %llu calls, avg %.1f cycles\n",
+               (unsigned long long)genSnap_count,
+               genSnap_count ? (double)genSnap_cycles / genSnap_count : 0.0);
+        printf("[HotPath] fmtPx: %llu calls, avg %.1f cycles\n",
+               (unsigned long long)fmtPx_count,
+               fmtPx_count ? (double)fmtPx_cycles / fmtPx_count : 0.0);
+        printf("[HotPath] orderMap: %llu ops, avg %.1f cycles\n",
+               (unsigned long long)orderMap_count,
+               orderMap_count ? (double)orderMap_cycles / orderMap_count : 0.0);
+    }
+};
+inline HotPathStats g_hotStats;
+#define PROF_CYC_START(var) uint64_t var = __rdtsc()
+#define PROF_CYC_END(stats, field, count_field, start) do { (stats).field += __rdtsc() - (start); (stats).count_field++; } while(0)
+#else
+struct HotPathStats {
+    void reset() {}
+    void print() const {}
+};
+inline HotPathStats g_hotStats;
+#define PROF_CYC_START(var) ((void)0)
+#define PROF_CYC_END(stats, field, count_field, start) ((void)0)
+#endif
+
 static constexpr int HYBRID_ARRAY_MAX    = 256;   // 超过此值切 map
 static constexpr int HYBRID_ARRAY_RESUME = 128;   // 低于此值切回 array
 
@@ -253,10 +309,15 @@ struct HybridLevelBook {
     // ================================================================
     //  find() — 查找指定价格的档位（模式无关）
     // ================================================================
+    // [v2.6] 二分查找优化：O(n) → O(log n)
     LevelNode* find(int32_t price) {
         if (LIKELY(!useMap)) {
-            for (int i = 0; i < count; i++) {
-                if (levels[i].price == price) return &levels[i];
+            int lo = 0, hi = count - 1;
+            while (lo <= hi) {
+                int mid = lo + (hi - lo) / 2;
+                if (levels[mid].price == price) return &levels[mid];
+                else if (levels[mid].price < price) lo = mid + 1;
+                else hi = mid - 1;
             }
             return nullptr;
         } else {
@@ -264,10 +325,15 @@ struct HybridLevelBook {
             return (it != treeLevels.end()) ? &it->second : nullptr;
         }
     }
+    // [v2.6] 二分查找优化（const 版本）
     const LevelNode* find(int32_t price) const {
         if (LIKELY(!useMap)) {
-            for (int i = 0; i < count; i++) {
-                if (levels[i].price == price) return &levels[i];
+            int lo = 0, hi = count - 1;
+            while (lo <= hi) {
+                int mid = lo + (hi - lo) / 2;
+                if (levels[mid].price == price) return &levels[mid];
+                else if (levels[mid].price < price) lo = mid + 1;
+                else hi = mid - 1;
             }
             return nullptr;
         } else {
@@ -310,15 +376,19 @@ struct HybridLevelBook {
     // ================================================================
     void erase(int32_t price) {
         if (LIKELY(!useMap)) {
-            for (int i = 0; i < count; i++) {
-                if (levels[i].price == price) {
-                    if (i < count - 1) {
-                        std::memmove(&levels[i], &levels[i + 1],
-                                     (count - 1 - i) * sizeof(LevelNode));
+            // 二分查找要删除的位置
+            int lo = 0, hi = count - 1;
+            while (lo <= hi) {
+                int mid = lo + (hi - lo) / 2;
+                if (levels[mid].price == price) {
+                    if (mid < count - 1) {
+                        std::memmove(&levels[mid], &levels[mid + 1],
+                                     (count - 1 - mid) * sizeof(LevelNode));
                     }
                     count--;
                     return;
-                }
+                } else if (levels[mid].price < price) lo = mid + 1;
+                else hi = mid - 1;
             }
         } else {
             treeLevels.erase(price);
@@ -333,11 +403,14 @@ struct HybridLevelBook {
     // ================================================================
     bool modifyQty(int32_t price, int32_t delta) {
         if (LIKELY(!useMap)) {
-            for (int i = 0; i < count; i++) {
-                if (levels[i].price == price) {
-                    levels[i].qty += delta;
+            int lo = 0, hi = count - 1;
+            while (lo <= hi) {
+                int mid = lo + (hi - lo) / 2;
+                if (levels[mid].price == price) {
+                    levels[mid].qty += delta;
                     return true;
-                }
+                } else if (levels[mid].price < price) lo = mid + 1;
+                else hi = mid - 1;
             }
             return false;
         } else {

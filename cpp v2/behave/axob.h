@@ -154,6 +154,10 @@ public:
     // [v2.2优化] lastSnap 从堆分配改为栈上对象，省掉每条消息的 delete/new (~50ns)
     AxsbeSnapStock lastSnap;
 
+    // [v2.7优化] genSnap 延迟重建标记
+    // genSnap() 只标记脏标志（~2ns），ensureSnap() 在需要时才完整重建（~225ns）
+    bool snapNeedsUpdate_ = false;
+
     // ==================== 构造 ====================
 #if USE_MEMORY_POOL
     AXOB(int securityID, SecurityIDSource src, InstrumentType type,
@@ -188,8 +192,10 @@ public:
     // ==================== 快照（axob_snap.cpp）====================
     void onSnap(const AxsbeSnapStock& snap);
     void genSnap();
-    AxsbeSnapStock genCallSnap(int showLevelNb = 10);
-    AxsbeSnapStock genTradingSnap(bool isVolBreaking = false, int levelNb = 10);
+    void ensureSnap();          // [v2.7] 确保快照最新（需要时完整重建）
+    void updateSnapStats();     // [v2.7] 增量更新统计字段（~5ns）
+    AxsbeSnapStock genCallSnap(int showLevelNb = 5);   // [v2.7] 10->5 减少 fmtPx 调用
+    AxsbeSnapStock genTradingSnap(bool isVolBreaking = false, int levelNb = 5);  // [v2.7] 10->5
 
     // ==================== 工具（axob_init.cpp）====================
     void useTimestamp(uint64_t transactTime);
@@ -216,9 +222,6 @@ public:
         ObOrder* p = new ObOrder();
 #endif
         *p = order;
-        // [v2.2优化] 修复双重哈希：emplace 替代 operator[]
-        // operator[] 内部先 find(seq) → 再 emplace，两次哈希计算
-        // emplace 直接插入，单次哈希
         orderMap.emplace(seq, p);
     }
     void eraseOrderMap(uint64_t seq) {

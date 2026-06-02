@@ -244,6 +244,8 @@ private:
     AxsbeSnapStock currentSnap_;
 
     // 解析下一行
+    // [v2.6] 零分配优化：直接使用 mmap 指针对 (lineStart, lineEnd)
+    // 消除每条消息的 std::string 分配（~200-500ns/消息）
     void advance() {
         hasNext_ = false;
 
@@ -262,20 +264,17 @@ private:
             while (ptr_ < end_ && *ptr_ != '\n' && *ptr_ != '\r') {
                 ++ptr_;
             }
-
-            // 创建临时 string 用于解析（复用 parseKeyValueLine）
-            // TODO: 未来可以优化为 string_view 版本
-            std::string line(lineStart, ptr_);
+            const char* lineEnd = ptr_;
 
             // 跳过非键值对行
-            if (line.size() < 2 || line[0] != '/' || line[1] != '/') {
+            size_t lineLen = static_cast<size_t>(lineEnd - lineStart);
+            if (lineLen < 2 || lineStart[0] != '/' || lineStart[1] != '/') {
                 continue;
             }
 
-            // [v2.3] 直接解析优化：跳过 parseKeyValueLine，直接提取 MsgType
-            // 然后使用 loadFromLine() 直接解析字段
+            // [v2.6] 直接使用指针对解析，无需创建 std::string
             int64_t msgType = 0;
-            if (!extractField(line.c_str(), "MsgType", msgType)) {
+            if (!extractField(lineStart, lineEnd, "MsgType", msgType)) {
                 continue;
             }
 
@@ -283,21 +282,21 @@ private:
 
             if (msgType == MsgType_order) {
                 currentOrder_ = AxsbeOrder{};
-                currentOrder_.loadFromLine(line.c_str());
+                currentOrder_.loadFromLine(lineStart, lineEnd);
                 hasNext_ = true;
                 return;
             } else if (msgType == MsgType_exe) {
                 currentExe_ = AxsbeExe{};
-                currentExe_.loadFromLine(line.c_str());
+                currentExe_.loadFromLine(lineStart, lineEnd);
                 hasNext_ = true;
                 return;
             } else if (msgType == MsgType_snap) {
                 currentSnap_ = AxsbeSnapStock{};
-                currentSnap_.loadFromLine(line.c_str());
+                currentSnap_.loadFromLine(lineStart, lineEnd);
                 hasNext_ = true;
                 return;
             }
-            // 其他 MsgType（如 11, 12）跳过，继续下一行
+            // 其他 MsgType 跳过
         }
     }
 };

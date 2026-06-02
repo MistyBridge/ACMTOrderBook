@@ -101,6 +101,7 @@ void consumerThread(axob::core::SPSCQueue<MarketEvent>& queue, AXOB& axob,
                     break;
 
                 case EventType::END:
+                    axob.ensureSnap();  // [v2.7] 确保最终快照状态正确
                     goto done;
             }
 

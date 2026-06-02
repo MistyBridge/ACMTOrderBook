@@ -85,25 +85,29 @@ void producerThread(const char* dataFile, axob::core::SPSCQueue<MarketEvent>& qu
             AxsbeSnapStock snap;
             int type = reader->next(order, exe, snap);
 
-            // 根据消息类型构建 MarketEvent
-            MarketEvent ev;
-            if (isOrdType(type)) {
-                ev = MarketEvent::makeOrder(order);
-            } else if (isExeType(type)) {
-                ev = MarketEvent::makeExe(exe);
-            } else if (isSnapType(type)) {
-                ev = MarketEvent::makeSnap(snap);
-            } else {
-                continue;  // 跳过未知类型
-            }
-
-            // 尝试推入队列，队列满时 spin 等待
-            while (!queue.try_push(ev)) {
+            // [v2.7] 零拷贝优化：直接在队列槽位上构造 MarketEvent
+            MarketEvent* slot = nullptr;
+            while (!(slot = queue.try_emplace_slot())) {
                 for (int i = 0; i < 64; ++i) {
                     cpu_pause();
                 }
                 std::atomic_thread_fence(std::memory_order_acquire);
             }
+
+            // 根据消息类型直接在槽位上构造
+            if (isOrdType(type)) {
+                *slot = MarketEvent::makeOrder(order);
+            } else if (isExeType(type)) {
+                *slot = MarketEvent::makeExe(exe);
+            } else if (isSnapType(type)) {
+                *slot = MarketEvent::makeSnap(snap);
+            } else {
+                // 跳过未知类型，但已占用槽位，需提交空事件
+                slot->type = EventType::END;  // 标记为 END，消费者会忽略
+            }
+
+            // 提交入队
+            queue.commit_push();
 
             totalProduced++;
 
@@ -120,13 +124,15 @@ void producerThread(const char* dataFile, axob::core::SPSCQueue<MarketEvent>& qu
     }
 
     // 发送 END 事件通知消费者退出
-    MarketEvent endEv = MarketEvent::makeEnd();
-    while (!queue.try_push(endEv)) {
+    MarketEvent* endSlot = nullptr;
+    while (!(endSlot = queue.try_emplace_slot())) {
         for (int i = 0; i < 64; ++i) {
             cpu_pause();
         }
         std::atomic_thread_fence(std::memory_order_acquire);
     }
+    *endSlot = MarketEvent::makeEnd();
+    queue.commit_push();
 
     auto t1 = std::chrono::high_resolution_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();

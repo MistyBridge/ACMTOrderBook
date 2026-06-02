@@ -90,7 +90,6 @@ struct AxsbeSnapStock : public AxsbeMessageBase<AxsbeSnapStock> {
     }
 
     // [v2.3] 直接从行字符串解析，跳过 dict 创建
-    // 注意：loadFromLine() 在基类中定义，这里实现 loadFromLineImpl()
     void loadFromLineImpl(const char* line) {
         int64_t value;
 
@@ -164,6 +163,42 @@ struct AxsbeSnapStock : public AxsbeMessageBase<AxsbeSnapStock> {
                     ask[i].Price = value;
                 if (extractField(line, keyQ, value))
                     ask[i].Qty = value;
+            }
+        }
+    }
+
+    // [v2.6] 零分配版本
+    void loadFromLineImpl(const char* s, const char* e) {
+        int64_t value;
+        if (extractField(s, e, "ChannelNo", value))
+            ChannelNo = static_cast<uint16_t>(value);
+        if (secSrc == SecurityIDSource_SZSE) {
+            if (extractField(s, e, "TradingPhase", value))      TradingPhaseCode = static_cast<uint8_t>(value);
+            if (extractField(s, e, "NumTrades", value))         NumTrades = value;
+            if (extractField(s, e, "TotalVolumeTrade", value))  TotalVolumeTrade = value;
+            if (extractField(s, e, "TotalValueTrade", value))   TotalValueTrade = value;
+            if (extractField(s, e, "PrevClosePx", value))       PrevClosePx = value;
+            if (extractField(s, e, "LastPx", value))            LastPx = value;
+            if (extractField(s, e, "OpenPx", value))            OpenPx = value;
+            if (extractField(s, e, "HighPx", value))            HighPx = value;
+            if (extractField(s, e, "LowPx", value))             LowPx = value;
+            if (extractField(s, e, "BidWeightPx", value))       BidWeightPx = value;
+            if (extractField(s, e, "BidWeightSize", value))     BidWeightSize = value;
+            if (extractField(s, e, "AskWeightPx", value))       AskWeightPx = value;
+            if (extractField(s, e, "AskWeightSize", value))     AskWeightSize = value;
+            if (extractField(s, e, "UpLimitPx", value))         UpLimitPx = value;
+            if (extractField(s, e, "DnLimitPx", value))         DnLimitPx = value;
+            if (extractField(s, e, "TransactTime", value))      TransactTime = static_cast<uint64_t>(value);
+            for (int i = 0; i < 10; i++) {
+                char keyP[32], keyQ[32];
+                snprintf(keyP, sizeof(keyP), "BidLevel[%d].Price", i);
+                snprintf(keyQ, sizeof(keyQ), "BidLevel[%d].Qty",   i);
+                if (extractField(s, e, keyP, value)) bid[i].Price = value;
+                if (extractField(s, e, keyQ, value)) bid[i].Qty   = value;
+                snprintf(keyP, sizeof(keyP), "AskLevel[%d].Price", i);
+                snprintf(keyQ, sizeof(keyQ), "AskLevel[%d].Qty",   i);
+                if (extractField(s, e, keyP, value)) ask[i].Price = value;
+                if (extractField(s, e, keyQ, value)) ask[i].Qty   = value;
             }
         }
     }
