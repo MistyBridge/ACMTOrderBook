@@ -59,16 +59,18 @@ struct AxsbeExe : public AxsbeMessageBase<AxsbeExe> {
     }
 
     // [v2.6] 零分配版本
+    // [v2.8] 跳过 ChannelNo 解析（AXOB 不使用 Exe 的 ChannelNo）
+    // [v2.8] 前向 strstr 优化：EXE 字段顺序固定，从上次位置继续搜索
     void loadFromLineImpl(const char* s, const char* e) {
         int64_t value;
-        if (extractField(s, e, "ChannelNo", value))        ChannelNo = static_cast<uint16_t>(value);
-        if (extractField(s, e, "ApplSeqNum", value))       ApplSeqNum = static_cast<uint64_t>(value);
-        if (extractField(s, e, "BidApplSeqNum", value))    BidApplSeqNum = static_cast<uint64_t>(value);
-        if (extractField(s, e, "OfferApplSeqNum", value))  OfferApplSeqNum = static_cast<uint64_t>(value);
-        if (extractField(s, e, "LastPx", value))           LastPx = value;
-        if (extractField(s, e, "LastQty", value))          LastQty = value;
-        if (extractField(s, e, "ExecType", value))         ExecType = static_cast<uint8_t>(value);
-        if (extractField(s, e, "TransactTime", value))     TransactTime = static_cast<uint64_t>(value);
+        FieldParser parser(s, e);
+        if (parser.find("ApplSeqNum", value))       ApplSeqNum = static_cast<uint64_t>(value);
+        if (parser.find("BidApplSeqNum", value))    BidApplSeqNum = static_cast<uint64_t>(value);
+        if (parser.find("OfferApplSeqNum", value))  OfferApplSeqNum = static_cast<uint64_t>(value);
+        if (parser.find("LastPx", value))           LastPx = value;
+        if (parser.find("LastQty", value))          LastQty = value;
+        if (parser.find("ExecType", value))         ExecType = static_cast<uint8_t>(value);
+        if (parser.find("TransactTime", value))     TransactTime = static_cast<uint64_t>(value);
     }
 
     // ---- 辅助方法 ----

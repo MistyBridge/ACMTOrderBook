@@ -215,12 +215,15 @@ public:
     int next(AxsbeOrder& order, AxsbeExe& exe, AxsbeSnapStock& snap) {
         if (!hasNext_) return -1;
 
-        // 返回当前消息类型和数据
-        order = currentOrder_;
-        exe = currentExe_;
-        snap = currentSnap_;
-
+        // 返回当前消息类型和数据（只拷贝对应类型）
         int type = currentType_;
+        if (isOrdType(type)) {
+            order = currentOrder_;
+        } else if (isExeType(type)) {
+            exe = currentExe_;
+        } else if (isSnapType(type)) {
+            snap = currentSnap_;
+        }
 
         // 预读取下一行
         advance();

@@ -94,64 +94,21 @@ public:
     SPSCQueue& operator=(SPSCQueue&&)      = delete;
 
     // ---------------------------------------------------------------
-    //  单条入队（拷贝语义）
-    //  队列满时返回 false，不做任何修改
-    // ---------------------------------------------------------------
-    bool try_push(const T& item) {
-        const uint64_t w = writeIndexVal_.load(std::memory_order_relaxed);
-        const uint64_t r = readIndexVal_.load(std::memory_order_acquire);
-        if (w - r >= capacity_) return false;  // 满
-
-        if constexpr (std::is_trivially_copyable_v<T>) {
-            std::memcpy(&buffer_[w & mask_], &item, sizeof(T));
-        } else {
-            new (&buffer_[w & mask_]) T(item);
-        }
-        writeIndexVal_.store(w + 1, std::memory_order_release);
-        return true;
-    }
-
-    // ---------------------------------------------------------------
-    //  单条入队（移动语义）
-    // ---------------------------------------------------------------
-    bool try_push(T&& item) {
-        const uint64_t w = writeIndexVal_.load(std::memory_order_relaxed);
-        const uint64_t r = readIndexVal_.load(std::memory_order_acquire);
-        if (w - r >= capacity_) return false;
-
-        if constexpr (std::is_trivially_copyable_v<T>) {
-            std::memcpy(&buffer_[w & mask_], &item, sizeof(T));
-        } else {
-            new (&buffer_[w & mask_]) T(static_cast<T&&>(item));
-        }
-        writeIndexVal_.store(w + 1, std::memory_order_release);
-        return true;
-    }
-
-    // ---------------------------------------------------------------
-    //  [v2.7] 原地构造入队（零拷贝）
-    //  在队列槽位上直接构造对象，避免中间拷贝
-    //  用法：
-    //    T* slot = queue.try_emplace_slot();
-    //    if (slot) {
-    //        slot->loadFromLine(line);  // 直接在槽位上构造
-    //        queue.commit_push();       // 提交入队
-    //    }
+    //  [v2.7] 零拷贝入队：返回槽位指针，生产者直接构造
+    //  调用者获得一个 T* 指针，可 placement new 或直接赋值
+    //  必须随后调用 commit_push() 提交
     // ---------------------------------------------------------------
     T* try_emplace_slot() {
         const uint64_t w = writeIndexVal_.load(std::memory_order_relaxed);
         const uint64_t r = readIndexVal_.load(std::memory_order_acquire);
         if (w - r >= capacity_) return nullptr;  // 满
-
-        // 默认构造槽位
-        new (&buffer_[w & mask_]) T();
         return &buffer_[w & mask_];
     }
 
     void commit_push() {
-        // 递增写索引，使元素对消费者可见
-        const uint64_t w = writeIndexVal_.load(std::memory_order_relaxed);
-        writeIndexVal_.store(w + 1, std::memory_order_release);
+        writeIndexVal_.store(
+            writeIndexVal_.load(std::memory_order_relaxed) + 1,
+            std::memory_order_release);
     }
 
     // ---------------------------------------------------------------

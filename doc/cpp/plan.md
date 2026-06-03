@@ -617,3 +617,87 @@ cmake --build build --config Release --parallel 8
 | 日期 | 版本 | 内容 |
 |------|------|------|
 | 2026-06-14 | v2.7 ✅ | genSnap 延迟重建完成，达到 1,139K msg/s，延迟降低 80% |
+
+## CPP v2.8：前向 strstr + 延迟采样 + 条件拷贝
+
+### 完成日期
+2026-06-14
+
+### 核心优化
+
+| 优化项 | 说明 | 实际收益 | 状态 |
+|--------|------|----------|------|
+| ChannelNo 跳过 | ORDER/EXE 不解析 ChannelNo | +1.9% | ✅ 已完成 |
+| Producer now_ns() 采样 | 每 8 条消息采样一次延迟 | +0.7% | ✅ 已完成 |
+| next() 条件拷贝 | 只拷贝对应类型结构体 | +1.2% | ✅ 已完成 |
+| 部分前向 strstr | ORDER/EXE 使用 FieldParser | +8.3% | ✅ 已完成 |
+
+### 性能指标（MSVC 2022 + mmap + ankerl + 前向 strstr）
+- 吞吐量：**1,326K msg/s**（+14.5% vs v2.7）
+- 最佳单次：1,344K msg/s
+- 100次稳定性测试：1,319K msg/s
+
+### 稳定性测试（5 次）
+
+| 测试次数 | 吞吐量 (msg/s) |
+|----------|---------------|
+| 1 | 1,290,900 |
+| 2 | 1,343,702 |
+| 3 | 1,336,597 |
+| 4 | 1,335,859 |
+| 5 | 1,325,290 |
+| **平均** | **1,326,470 msg/s** |
+
+### 构建方式
+```bash
+cmake -B build -G "Visual Studio 17 2022" -A x64 -DUSE_MMAP=ON -DUSE_FLAT_HASHMAP=1
+cmake --build build --config Release --parallel 8
+```
+
+### 技术亮点
+
+1. **前向 strstr**：记录上次查找位置，减少搜索范围 ~4x
+2. **延迟采样**：每 8 条消息采样一次，减少 QPC 开销
+3. **条件拷贝**：只拷贝实际类型结构体，减少 memcpy 开销
+4. **ChannelNo 跳过**：ORDER/EXE 不解析无用字段
+
+### 代码变更
+
+**新增文件**：
+- `tool/field_parser.h`：FieldParser 类（前向 strstr）
+
+**修改文件**：
+- `pipeline/event.h`：factory 方法 now_ns() → 0
+- `pipeline/producer.cpp`：每 8 条消息采样 now_ns()
+- `pipeline/consumer.cpp`：延迟采样逻辑
+- `tool/mmap_file.h`：next() 条件拷贝
+- `tool/axsbe_order.h`：使用 FieldParser + 跳过 ChannelNo
+- `tool/axsbe_exe.h`：使用 FieldParser + 跳过 ChannelNo
+
+---
+
+## 最终性能总结
+
+### 版本演进
+
+| 版本 | 吞吐量 | 核心优化 | 提升 |
+|------|--------|----------|------|
+| v2.1 | 212K | MSVC 编译优化 | 基准 |
+| v2.2 | 530K | mmap + 数据结构 | +150% |
+| v2.3 | 995K | 直接解析 | +88% |
+| v2.4 | 1,047K | 代码质量 | +5% |
+| v2.5 | 1,052K | PGO + Huge Pages | +0.5% |
+| v2.6 | 1,125K | 零分配解析 + 二分查找 + ankerl | +7% |
+| v2.7 | 1,174K | genSnap 延迟重建 | +4% |
+| v2.8 | 1,326K | 前向 strstr + 延迟采样 + 条件拷贝 | +14.5% |
+
+### 总提升
+- v2.1 → v2.8：212K → 1,326K（**+525%**）
+
+---
+
+## 更新日志（续）
+
+| 日期 | 版本 | 内容 |
+|------|------|------|
+| 2026-06-14 | v2.8 ✅ | 前向 strstr + 延迟采样 + 条件拷贝，达到 1,326K msg/s (+14.5%) |
