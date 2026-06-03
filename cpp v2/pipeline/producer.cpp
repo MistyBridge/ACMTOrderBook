@@ -106,6 +106,11 @@ void producerThread(const char* dataFile, axob::core::SPSCQueue<MarketEvent>& qu
                 slot->type = EventType::END;  // 标记为 END，消费者会忽略
             }
 
+            // [v2.8] 延迟采样：只对 1/8 消息设置时间戳
+            if ((totalProduced & 7) == 0) {
+                slot->enqueueTimestamp = now_ns();
+            }
+
             // 提交入队
             queue.commit_push();
 

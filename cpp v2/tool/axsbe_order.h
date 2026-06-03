@@ -60,18 +60,19 @@ struct AxsbeOrder : public AxsbeMessageBase<AxsbeOrder> {
     }
 
     // [v2.6] 零分配版本
+    // [v2.8] 跳过 ChannelNo 解析（AXOB 不使用 Order 的 ChannelNo）
+    // [v2.8] 前向 strstr 优化：ORDER 字段顺序固定，从上次位置继续搜索
     void loadFromLineImpl(const char* s, const char* e) {
         int64_t value;
-        if (extractField(s, e, "ChannelNo", value))
-            ChannelNo = static_cast<uint16_t>(value);
-        if (extractField(s, e, "ApplSeqNum", value))
+        FieldParser parser(s, e);
+        if (parser.find("ApplSeqNum", value))
             ApplSeqNum = static_cast<uint64_t>(value);
         if (secSrc == SecurityIDSource_SZSE) {
-            if (extractField(s, e, "Price", value))        Price = value;
-            if (extractField(s, e, "OrderQty", value))     OrderQty = static_cast<int32_t>(value);
-            if (extractField(s, e, "Side", value))          Side = static_cast<uint8_t>(value);
-            if (extractField(s, e, "TransactTime", value)) TransactTime = static_cast<uint64_t>(value);
-            if (extractField(s, e, "OrdType", value))      OrdType = static_cast<uint8_t>(value);
+            if (parser.find("Price", value))        Price = value;
+            if (parser.find("OrderQty", value))     OrderQty = static_cast<int32_t>(value);
+            if (parser.find("Side", value))          Side = static_cast<uint8_t>(value);
+            if (parser.find("OrdType", value))      OrdType = static_cast<uint8_t>(value);
+            if (parser.find("TransactTime", value)) TransactTime = static_cast<uint64_t>(value);
         }
     }
 

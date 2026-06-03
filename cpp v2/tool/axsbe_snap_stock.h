@@ -168,6 +168,7 @@ struct AxsbeSnapStock : public AxsbeMessageBase<AxsbeSnapStock> {
     }
 
     // [v2.6] 零分配版本
+    // [v2.8] 保持原版 extractField（SNAP 字段顺序复杂，FieldParser 收益有限）
     void loadFromLineImpl(const char* s, const char* e) {
         int64_t value;
         if (extractField(s, e, "ChannelNo", value))

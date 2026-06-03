@@ -72,7 +72,7 @@ struct MarketEvent {
     static MarketEvent makeOrder(const AxsbeOrder& o) {
         MarketEvent ev;
         ev.type = EventType::ORDER;
-        ev.enqueueTimestamp = now_ns();
+        ev.enqueueTimestamp = 0;
         new (&ev.order) AxsbeOrder(o);
         return ev;
     }
@@ -80,7 +80,7 @@ struct MarketEvent {
     static MarketEvent makeExe(const AxsbeExe& e) {
         MarketEvent ev;
         ev.type = EventType::EXEC;
-        ev.enqueueTimestamp = now_ns();
+        ev.enqueueTimestamp = 0;
         new (&ev.exec) AxsbeExe(e);
         return ev;
     }
@@ -88,7 +88,7 @@ struct MarketEvent {
     static MarketEvent makeSnap(const AxsbeSnapStock& s) {
         MarketEvent ev;
         ev.type = EventType::SNAP;
-        ev.enqueueTimestamp = now_ns();
+        ev.enqueueTimestamp = 0;
         new (&ev.snap) AxsbeSnapStock(s);
         return ev;
     }
@@ -96,7 +96,7 @@ struct MarketEvent {
     static MarketEvent makeSignal(AXSignal sig) {
         MarketEvent ev;
         ev.type = EventType::SIGNAL;
-        ev.enqueueTimestamp = now_ns();
+        ev.enqueueTimestamp = 0;
         ev.signal = sig;
         return ev;
     }
@@ -104,7 +104,7 @@ struct MarketEvent {
     static MarketEvent makeEnd() {
         MarketEvent ev;
         ev.type = EventType::END;
-        ev.enqueueTimestamp = now_ns();
+        ev.enqueueTimestamp = 0;
         ev.signal = AXSignal::ALL_END;
         return ev;
     }
