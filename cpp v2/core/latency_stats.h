@@ -33,6 +33,7 @@ public:
     // 统计快照结构体
     struct Stats {
         uint64_t p50;     // 中位数（纳秒）
+        uint64_t p90;     // 90 百分位（纳秒）
         uint64_t p99;     // 99 百分位（纳秒）
         uint64_t p999;    // 99.9 百分位（纳秒）
         uint64_t pmax;    // 最大值（纳秒）
@@ -99,7 +100,7 @@ public:
     Stats snapshot() const {
         const uint64_t total = count_.load(std::memory_order_relaxed);
         const size_t n = std::min(static_cast<size_t>(total), capacity_);
-        if (n == 0) return Stats{0, 0, 0, 0, 0};
+        if (n == 0) return Stats{0, 0, 0, 0, 0, 0};
 
         // 拷贝有效数据到临时数组
         const uint64_t w = writeIdx_.load(std::memory_order_relaxed);
@@ -122,6 +123,7 @@ public:
         // 注意：后续 nth_element 可能移动前一级的迭代器所指元素，
         //       因此每次 nth_element 之后立即保存结果。
         auto p50_it  = tmp.begin() + static_cast<ptrdiff_t>(n / 2);
+        auto p90_it  = tmp.begin() + static_cast<ptrdiff_t>(n * 90 / 100);
         auto p99_it  = tmp.begin() + static_cast<ptrdiff_t>(n * 99 / 100);
         auto p999_it = tmp.begin() + static_cast<ptrdiff_t>(n * 999 / 1000);
 
@@ -131,14 +133,21 @@ public:
         }
         uint64_t p50 = *p50_it;
 
-        // 第 2 步：在 [p50, end) 中定位 p99
-        uint64_t p99 = p50;  // 若 p99 == p50 则无需再次 partition
-        if (p99_it != p50_it) {
-            std::nth_element(p50_it, p99_it, tmp.end());
+        // 第 2 步：在 [p50, end) 中定位 p90
+        uint64_t p90 = p50;  // 若 p90 == p50 则无需再次 partition
+        if (p90_it != p50_it) {
+            std::nth_element(p50_it, p90_it, tmp.end());
+            p90 = *p90_it;
+        }
+
+        // 第 3 步：在 [p90, end) 中定位 p99
+        uint64_t p99 = p90;  // 若 p99 == p90 则无需再次 partition
+        if (p99_it != p90_it) {
+            std::nth_element(p90_it, p99_it, tmp.end());
             p99 = *p99_it;
         }
 
-        // 第 3 步：在 [p99, end) 中定位 p999
+        // 第 4 步：在 [p99, end) 中定位 p999
         uint64_t p999 = p99;
         if (p999_it != p99_it) {
             std::nth_element(p99_it, p999_it, tmp.end());
@@ -148,7 +157,7 @@ public:
         // pmax: [p999_it, end) 中的最大值
         uint64_t pmax = *std::max_element(p999_it, tmp.end());
 
-        return Stats{p50, p99, p999, pmax, n};
+        return Stats{p50, p90, p99, p999, pmax, n};
     }
 
     // ---------------------------------------------------------------

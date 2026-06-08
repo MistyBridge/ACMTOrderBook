@@ -120,8 +120,9 @@ void Pipeline::run() {
     printf("Total: %d msgs (order=%d exe=%d snap=%d)\n",
            result_.totalMsgs, result_.orderCnt, result_.exeCnt, result_.snapCnt);
     printf("Time:  %.3f s (%.0f msg/s)\n", result_.elapsedSec, result_.throughput);
-    printf("Latency: p50=%.1fus p99=%.1fus p99.9=%.1fus pmax=%.1fus\n",
+    printf("Latency: p50=%.1fus p90=%.1fus p99=%.1fus p99.9=%.1fus pmax=%.1fus\n",
            result_.latency.p50 / 1000.0,
+           result_.latency.p90 / 1000.0,
            result_.latency.p99 / 1000.0,
            result_.latency.p999 / 1000.0,
            result_.latency.pmax / 1000.0);
