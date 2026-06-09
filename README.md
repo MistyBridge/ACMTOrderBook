@@ -51,18 +51,103 @@
 
 ---
 
+## 编译指南
+
+### 环境要求
+
+- **操作系统**：Windows 10/11
+- **编译器**：MSVC 2022 (Visual Studio 2022)
+- **CMake**：3.15 或更高版本
+- **Git**：用于克隆项目
+
+### 编译步骤
+
+#### 1. 克隆项目
+
+```bash
+git clone https://github.com/MistyBridge/ACMTOrderBook.git
+cd ACMTOrderBook
+```
+
+#### 2. 编译 Python 版本（可选）
+
+```bash
+cd py
+python main.py
+```
+
+#### 3. 编译 C++ v1 版本
+
+```bash
+cd "cpp v1"
+g++ -std=c++17 -O0 -I. -o orderbook.exe main.cpp behave/*.cpp
+```
+
+#### 4. 编译 C++ v2 版本（推荐）
+
+```bash
+cd "cpp v2"
+
+# 使用 CMake 配置（推荐）
+cmake -B build -G "Visual Studio 17 2022" -A x64 -DUSE_MMAP=ON -DUSE_FLAT_HASHMAP=1
+
+# 编译 Release 版本
+cmake --build build --config Release --parallel 8
+
+# 输出文件
+build/Release/orderbook_v2.exe
+```
+
+#### 5. 编译优化选项
+
+**基础优化**（已包含）：
+- `/O2`：最大速度优化
+- `/GL`：全程序优化
+- `/arch:AVX2`：AVX2 指令集
+- `/LTCG`：链接时代码生成
+
+**高级优化**（可选）：
+```bash
+# PGO 优化（需要运行两次）
+cmake -B build_pgo -G "Visual Studio 17 2022" -A x64 -DUSE_MMAP=ON -DUSE_FLAT_HASHMAP=1 -DPGO_MODE=GEN
+cmake --build build_pgo --config Release --parallel 8
+./build_pgo/Release/orderbook_v2.exe [数据文件] 0 2 16384 64 100
+
+cmake -B build_pgo_opt -G "Visual Studio 17 2022" -A x64 -DUSE_MMAP=ON -DUSE_FLAT_HASHMAP=1 -DPGO_MODE=USE
+cmake --build build_pgo_opt --config Release --parallel 8
+```
+
+#### 6. 运行测试
+
+```bash
+# 单次测试
+./build/Release/orderbook_v2.exe [数据文件] [生产者核心] [消费者核心] [队列容量] [批次大小] [重放次数]
+
+# 示例：100 次重放测试
+./build/Release/orderbook_v2.exe "../data/20220422/AX_sbe_szse_000001.log" 0 2 16384 64 100
+```
+
+### 性能优化建议
+
+1. **使用 Release 模式**：确保编译时使用 Release 配置
+2. **启用 AVX2**：确保 CPU 支持 AVX2 指令集
+3. **绑定 CPU 核心**：生产者绑定 Core 0，消费者绑定 Core 2
+4. **使用 mmap**：启用 mmap 文件预加载（默认开启）
+5. **使用平铺哈希表**：启用 ankerl::unordered_dense（默认开启）
+
+---
+
 ## 性能对比
 
 测试数据：深交所 000001（平安银行）2022-04-22 全日 L2 逐笔行情，共 **233,875 条消息**。
 
-| 指标 | Python | C++ v1 (-O0) | C++ v2 (最终版) | 提升 (v2 vs v1) |
-|------|--------|--------------|-----------------|-----------------|
-| 吞吐量 | 4,109 msg/s | 64,613 msg/s | **1,326,000 msg/s** | **+1,950%** |
+| 指标 | Python | C++ v1 (-O0) | C++ v2.8 | 提升 (v2.8 vs v1) |
+|------|--------|--------------|----------|-------------------|
+| 吞吐量 | 4,109 msg/s | 64,613 msg/s | **1,339,869 msg/s** | **+1,973%** |
 | p50 延迟 | - | - | 0.3 μs | - |
-| p90 延迟 | - | - | 0.5 μs | - |
-| p99 延迟 | - | - | ~393 μs | - |
-| p99.9 延迟 | - | - | ~700 μs | - |
-| pmax 延迟 | - | - | ~1,040 μs | - |
+| p99 延迟 | - | - | 82.6 μs | - |
+| p99.9 延迟 | - | - | 601.3 μs | - |
+| pmax 延迟 | - | - | 799.1 μs | - |
 | 重建结果 | ✓ 正确 | ✓ 正确 | ✓ 正确 | 完全一致 |
 
 > 所有版本产生完全相同的订单簿状态：`NumTrades=810,490 LastPx=1606 HighPx=1619 LowPx=1540`
@@ -73,7 +158,14 @@
 |------|--------|----------|------|
 | Python | 4,109 msg/s | 基准 | - |
 | CPP v1 | 64,613 msg/s | 单线程 C++ 重写 | +1,472% |
-| CPP v2 (最终版) | 1,326,000 msg/s | 多线程 + 数据结构 + 解析 + 延迟优化 | +1,950% |
+| CPP v2.1 | 223,410 msg/s | MSVC 编译优化 + HybridLevelBook | +246% |
+| CPP v2.2 | 433,332 msg/s | mmap 文件预加载 + 平铺哈希表 | +94% |
+| CPP v2.3 | 1,102,511 msg/s | 直接字段解析优化 | +154% |
+| CPP v2.4 | 1,087,261 msg/s | 代码质量优化 | -1% |
+| CPP v2.5 | 1,065,053 msg/s | PGO + Huge Pages | -2% |
+| CPP v2.6 | 1,240,251 msg/s | 零分配解析 + 二分查找 + ankerl | +16% |
+| CPP v2.7 | 1,224,407 msg/s | genSnap 延迟重建 | -1% |
+| CPP v2.8 | 1,339,869 msg/s | 前向 strstr + 延迟采样 + 条件拷贝 | +9% |
 
 ---
 
