@@ -198,12 +198,13 @@ class Dashboard(tk.Tk):
         sf.pack(fill="x", padx=15, pady=(10, 5))
         r.stats = {}
         for j, (k, _) in enumerate([
-            ("Time", "-"), ("Trades", "-"), ("LastPx", "-"),
-            ("Bid1", "-"), ("Ask1", "-"),   ("Msg/s", "-"),
+            ("Time", "-"),   ("Trades", "-"), ("LastPx", "-"),
+            ("Bid1", "-"),   ("Ask1", "-"),   ("Msg/s", "-"),
+            ("P50", "-"),    ("P99", "-"),    ("Pmax", "-"),
         ]):
-            ro, co = divmod(j, 2)
+            ro, co = divmod(j, 3)
             f = tk.Frame(sf, bg=TH["panel"])
-            f.grid(row=ro, column=co, sticky="w", padx=(0, 25), pady=2)
+            f.grid(row=ro, column=co, sticky="w", padx=(0, 15), pady=2)
             _label(f, text=k, font=("Consolas", 9), fg=TH["dim"]).pack(side="left")
             v = _label(f, text="-", font=("Consolas", 10, "bold"), fg=TH["text"])
             v.pack(side="left", padx=(4, 0))
@@ -378,6 +379,13 @@ class Dashboard(tk.Tk):
             m3 = re.search(pat, line)
             if m3:
                 r.stats[key].config(text=m3.group(1))
+
+        # latency (v2: "Latency: p50=1.2us p99=15.3us p99.9=45.6us pmax=120.0us")
+        m_lat = re.search(r"Latency:\s*p50=([\d.]+)us\s*p99=([\d.]+)us\s*p99\.9=[\d.]+us\s*pmax=([\d.]+)us", line)
+        if m_lat:
+            r.stats["P50"].config(text=m_lat.group(1) + "us")
+            r.stats["P99"].config(text=m_lat.group(2) + "us")
+            r.stats["Pmax"].config(text=m_lat.group(3) + "us")
 
         # py 5-level orderbook  (format: "  16.0600     344,860")
         #   first ask line after "ASK" header  -> Ask1
