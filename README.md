@@ -156,6 +156,21 @@ cmake --build build_pgo_opt --config Release --parallel 8
 
 > 所有版本产生完全相同的订单簿状态：`NumTrades=810,490 LastPx=1606 HighPx=1619 LowPx=1540`
 
+### 版本演进
+
+| 版本 | 吞吐量 | 核心优化 |
+|------|--------|----------|
+| Python | 4,109 msg/s | 基准 |
+| CPP v1 | 64,613 msg/s | 单线程 C++ 重写 |
+| CPP v2.1 | 223,410 msg/s | MSVC 编译优化 + HybridLevelBook |
+| CPP v2.2 | 433,332 msg/s | mmap 文件预加载 + 平铺哈希表 |
+| CPP v2.3 | 1,102,511 msg/s | 直接字段解析优化 |
+| CPP v2.4 | 1,087,261 msg/s | 代码质量优化 |
+| CPP v2.5 | 1,065,053 msg/s | PGO + Huge Pages |
+| CPP v2.6 | 1,240,251 msg/s | 零分配解析 + 二分查找 + ankerl |
+| CPP v2.7 | 1,224,407 msg/s | genSnap 延迟重建 |
+| CPP v2.8 | 1,339,869 msg/s | 前向 strstr + 延迟采样 + 条件拷贝 |
+
 ---
 
 ## 项目结构
