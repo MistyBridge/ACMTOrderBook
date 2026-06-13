@@ -8,3 +8,4 @@ dist/
 data/**/*.log
 py/log/
 test_data.log
+.codegraph/
