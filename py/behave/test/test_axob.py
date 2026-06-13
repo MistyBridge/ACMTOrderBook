@@ -9,6 +9,10 @@ from behave.mu import *
 import os
 import pickle
 
+def print_log(h, msg):
+    print(msg)
+    if h!=print:
+        h(msg)
 
 def TEST_axob_SL(date, instrument:int, 
                 SecurityIDSource=SecurityIDSource_SZSE, 
@@ -172,21 +176,17 @@ def TEST_mu_SL(source_file, instrument_list,
     return
 
 
-@timeit
-def TEST_axob_bat(source_file, instrument_list:list, n_max=500, 
+def TEST_axob_core(loader_itor, instrument_list:list, n_max=500, 
                     openCall_only=False,
                     SecurityIDSource=SecurityIDSource_SZSE, 
                     instrument_type=INSTRUMENT_TYPE.STOCK,
                     HHMMSSms_max=None,
                     logPack=(print, print, print, print)
                 ):
-    if not os.path.exists(source_file):
-        raise f"{source_file} not exists"
-
     DBG, INFO, WARN, ERR = logPack
 
     mu = MU(instrument_list, SecurityIDSource, instrument_type)
-    print(f'{datetime.today()} instrumen_nb={len(instrument_list)}, current memory usage={getMemUsageGB():.3f} GB')
+    print_log(INFO, f'{datetime.today()} instrumen_nb={len(instrument_list)}, current memory usage={getMemUsageGB():.3f} GB')
 
     n = 0 #只计算在 instrument_list 内的消息
     n_bgn = 0
@@ -196,28 +196,28 @@ def TEST_axob_bat(source_file, instrument_list:list, n_max=500,
     t_pf = t_bgn
     profile_memUsage = 0
     profile_memFree = getMemFreeGB()
-    for msg in axsbe_file(source_file):
+    for msg in loader_itor:
         if msg.TradingPhaseMarket==TPM.OpenCall and boc==0:
             boc = 1
-            print(f'{datetime.today()} openCall start')
+            print_log(INFO, f'{datetime.today()} openCall start')
 
         if msg.TradingPhaseMarket==TPM.Ending and ecc==0:
             ecc = 1
-            print(f'{datetime.today()} closeCall over')
+            print_log(INFO, f'{datetime.today()} closeCall over')
 
         mu.onMsg(msg)
         n += 1
         if n_max>0 and n>=n_max:
-            print(f'{datetime.today()} nb over, n={n}')
+            print_log(INFO, f'{datetime.today()} nb over, n={n}')
             break
 
         if (openCall_only and msg.HHMMSSms>92600000) or \
            (msg.HHMMSSms>150100000):
-            print(f'{datetime.today()} Ending: over, n={n}')
+            print_log(INFO, f'{datetime.today()} Ending: over, n={n}')
             break
 
         if HHMMSSms_max is not None and HHMMSSms_max>0 and msg.HHMMSSms>HHMMSSms_max:
-            print(f'{datetime.today()} HHMMSSms_max: over, n={n}, msg @({msg.TransactTime})')
+            print_log(INFO, f'{datetime.today()} HHMMSSms_max: over, n={n}, msg @({msg.TransactTime})')
             break
 
         now = time()
@@ -232,7 +232,7 @@ def TEST_axob_bat(source_file, instrument_list:list, n_max=500,
             t_pf = now
 
             if now>t_bgn+60*10:#内存情况，报告周期10min
-                print(f'{datetime.today()} current memory usage={memUsage:.3f} GB free={memFree:.3f} GB'
+                print_log(INFO, f'{datetime.today()} current memory usage={memUsage:.3f} GB free={memFree:.3f} GB'
                     f'(epoch peak={profile_memUsage:.3f} GB, minFree={profile_memFree:.3f} GB),' 
                     f' @{msg.HHMMSSms}')
                 t_bgn = now
@@ -242,20 +242,143 @@ def TEST_axob_bat(source_file, instrument_list:list, n_max=500,
     if WARN is not None:
         WARN(mu) #保证能记录到文件中
     assert mu.are_you_ok()
-    print(f'== TEST_axob_bat PASS ==')
+    print_log(INFO, f'== TEST_axob_bat PASS ==')
+    return
+
+def TEST_axob_bat(source_file, instrument_list:list, n_max=500, 
+                    openCall_only=False,
+                    SecurityIDSource=SecurityIDSource_SZSE, 
+                    instrument_type=INSTRUMENT_TYPE.STOCK,
+                    HHMMSSms_max=None,
+                    logPack=(print, print, print, print)
+                ):
+    if not os.path.exists(source_file):
+        raise f"{source_file} not exists"
+
+    loader_itor = axsbe_file(source_file)
+
+    TEST_axob_core(loader_itor, 
+                    instrument_list, 
+                    n_max=n_max,
+                    openCall_only=openCall_only,
+                    SecurityIDSource=SecurityIDSource,
+                    instrument_type=instrument_type,
+                    HHMMSSms_max=HHMMSSms_max,
+                    logPack=logPack
+    )
+
+    # DBG, INFO, WARN, ERR = logPack
+
+    # mu = MU(instrument_list, SecurityIDSource, instrument_type)
+    # print_log(INFO, f'{datetime.today()} instrumen_nb={len(instrument_list)}, current memory usage={getMemUsageGB():.3f} GB')
+
+    # n = 0 #只计算在 instrument_list 内的消息
+    # n_bgn = 0
+    # boc = 0
+    # ecc = 0
+    # t_bgn = time()
+    # t_pf = t_bgn
+    # profile_memUsage = 0
+    # profile_memFree = getMemFreeGB()
+    # for msg in axsbe_file(source_file):
+    #     if msg.TradingPhaseMarket==TPM.OpenCall and boc==0:
+    #         boc = 1
+    #         print_log(INFO, f'{datetime.today()} openCall start')
+
+    #     if msg.TradingPhaseMarket==TPM.Ending and ecc==0:
+    #         ecc = 1
+    #         print_log(INFO, f'{datetime.today()} closeCall over')
+
+    #     mu.onMsg(msg)
+    #     n += 1
+    #     if n_max>0 and n>=n_max:
+    #         print_log(INFO, f'{datetime.today()} nb over, n={n}')
+    #         break
+
+    #     if (openCall_only and msg.HHMMSSms>92600000) or \
+    #        (msg.HHMMSSms>150100000):
+    #         print_log(INFO, f'{datetime.today()} Ending: over, n={n}')
+    #         break
+
+    #     if HHMMSSms_max is not None and HHMMSSms_max>0 and msg.HHMMSSms>HHMMSSms_max:
+    #         print_log(INFO, f'{datetime.today()} HHMMSSms_max: over, n={n}, msg @({msg.TransactTime})')
+    #         break
+
+    #     now = time()
+
+    #     if now > t_pf+30: #内存占用采样周期30s
+    #         memUsage = getMemUsageGB()
+    #         if memUsage>profile_memUsage:
+    #             profile_memUsage = memUsage
+    #         memFree = getMemFreeGB()
+    #         if memFree<profile_memFree:
+    #             profile_memFree = memFree
+    #         t_pf = now
+
+    #         if now>t_bgn+60*10:#内存情况，报告周期10min
+    #             print_log(INFO, f'{datetime.today()} current memory usage={memUsage:.3f} GB free={memFree:.3f} GB'
+    #                 f'(epoch peak={profile_memUsage:.3f} GB, minFree={profile_memFree:.3f} GB),' 
+    #                 f' @{msg.HHMMSSms}')
+    #             t_bgn = now
+    #             profile_memUsage = 0
+    #             profile_memFree = memFree
+
+    # if WARN is not None:
+    #     WARN(mu) #保证能记录到文件中
+    # assert mu.are_you_ok()
+    # print_log(INFO, f'== TEST_axob_bat PASS ==')
     return
 
 
-def TEST_axob(date, instrument:int, n_max=500, 
+def TEST_axob(date, instrument:int, n_max=0, 
                 openCall_only=False,
                 SecurityIDSource=SecurityIDSource_SZSE, 
-                instrument_type=INSTRUMENT_TYPE.STOCK
+                instrument_type=INSTRUMENT_TYPE.STOCK,
+                logPack=(print, print, print, print)
             ):
-    md_file = f'data/{date}/AX_sbe_szse_{instrument:06d}.log'
+    if SecurityIDSource==SecurityIDSource_SZSE:
+        SecurityIDSource_char = 'szse'
+    elif SecurityIDSource==SecurityIDSource_SSE:
+        SecurityIDSource_char = 'sse'
+    md_file = f'data/{date}/AX_sbe_{SecurityIDSource_char}_{instrument:06d}.log'
     if not os.path.exists(md_file):
         raise f"{md_file} not exists"
 
-    TEST_axob_bat(md_file, [instrument], n_max, openCall_only, SecurityIDSource, instrument_type)
+    TEST_axob_bat(md_file, [instrument], n_max, openCall_only, SecurityIDSource, instrument_type, logPack=logPack)
+
+    return
+
+def TEST_axob_csv(date, instrument:int, n_max=0, 
+                openCall_only=False,
+                SecurityIDSource=SecurityIDSource_SZSE, 
+                instrument_type=INSTRUMENT_TYPE.STOCK,
+                logPack=(print, print, print, print)
+            ):
+    if SecurityIDSource==SecurityIDSource_SZSE:
+        SecurityIDSource_char = 'SZ'
+    elif SecurityIDSource==SecurityIDSource_SSE:
+        SecurityIDSource_char = 'SH'
+    cj_file = f'data/{date}/{instrument:06d}.{SecurityIDSource_char}.cj'
+    wt_file = f'data/{date}/{instrument:06d}.{SecurityIDSource_char}.wt'
+    snap_file = f'data/{date}/{instrument:06d}.{SecurityIDSource_char}.snap' #需要手动写一个快照，用于初始化AXOB
+
+    if not os.path.exists(wt_file):
+        raise f"{wt_file} not exists"
+    if not os.path.exists(cj_file):
+        raise f"{cj_file} not exists"
+    if not os.path.exists(snap_file):
+        raise f"{snap_file} not exists"
+
+    loader_itor = axsbe_file_csv(wt_file, cj_file, snap_file)
+
+    TEST_axob_core(loader_itor, 
+                    [instrument], 
+                    n_max=n_max,
+                    openCall_only=openCall_only,
+                    SecurityIDSource=SecurityIDSource,
+                    instrument_type=instrument_type,
+                    logPack=logPack
+    )
 
     return
 
@@ -433,6 +556,7 @@ def TEST_mu_rolling(source_file, instrument_list, n_max=500, rolling_gap=5,
 def TEST_mu_bat(source_file, instrument_list:list,
                 batch_nb,
                 bgn_batch=0,
+                end_batch=-1,
                 SecurityIDSource=SecurityIDSource_SZSE, 
                 instrument_type=INSTRUMENT_TYPE.STOCK,
                 logPack=(print, print, print, print)
@@ -442,15 +566,21 @@ def TEST_mu_bat(source_file, instrument_list:list,
     instrument_list: 分组前的标的列表，输入时尽量按照逐笔数目排序，有利于分组均衡
     batch_nb:分成几组。 若分为n组，则每组序号为：[0, n, 2n...], [1, n+1, 2n+1...] ... [n-1, 2n-1, 3n-1...]
     bgn_batch:从第几分组开始运行，取值范围:[0, batch_nb-1].
+    bgn_batch:到第几分组结束运行，小于bgn_batch则运行到最末尾.
     '''
-    for i in range(bgn_batch, batch_nb):
+    _end_batch = end_batch
+    if _end_batch<bgn_batch or _end_batch>=batch_nb: _end_batch=batch_nb-1
+    DBG, INFO, WARN, ERR = logPack
+
+    print_log(INFO, f'{datetime.today()} Test mu batch nb={batch_nb}, work from #{bgn_batch} to #{_end_batch}:')
+    for i in range(bgn_batch, _end_batch+1):
         current_list = instrument_list[i::batch_nb]
         freeGB = getMemFreeGB()
-        print(f'{datetime.today()} Working on batch {i}/{batch_nb}, current system free memory={freeGB:.3f} GB...')
+        print_log(INFO, f'{datetime.today()} Working on batch #{i}/{batch_nb}, current system free memory={freeGB:.3f} GB...')
         while freeGB*168<len(current_list)*30:  #168只个股最大约占30G
-            print(f'{datetime.today()} sleep for not enough free memory...')
+            print_log(INFO, f'{datetime.today()} sleep for not enough free memory...')
             sleep(180)
             freeGB = getMemFreeGB()
-            print(f'{datetime.today()} current system free memory={freeGB:.3f} GB' 
-                  f'(each instrument={freeGB/len(current_list):.4f}, require={20/168*len(current_list):.4f})')
+            print_log(INFO, f'{datetime.today()} current system free memory={freeGB:.3f} GB' 
+                  f'(each instrument={freeGB/len(current_list):.4f}), total require={30*len(current_list)/168:.4f} GB')
         TEST_axob_bat(source_file, current_list, n_max=0, openCall_only=False, SecurityIDSource=SecurityIDSource, instrument_type=instrument_type, logPack=logPack) #

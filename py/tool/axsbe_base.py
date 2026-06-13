@@ -10,10 +10,26 @@ SecurityIDSource_SSE = 101
 SecurityIDSource_SZSE = 102
 
 ## 消息类型
-MsgType_exe   = 191
-MsgType_order = 192
-MsgType_snap  = 111
+MsgType_exe_stock   = 191
+MsgType_exe_sse_bond   = 84
+MsgTypes_exe = [MsgType_exe_stock, MsgType_exe_sse_bond]
 
+
+MsgType_order_stock = 192
+MsgType_order_sse_bond_add = 65
+MsgType_order_sse_bond_del = 68
+MsgTypes_order = [MsgType_order_stock, MsgType_order_sse_bond_add, MsgType_order_sse_bond_del]
+
+
+MsgType_snap_stock      = 111 #深交所股票、可转债；上交所股票基金
+MsgType_snap_szse_bond  = 211 #深交所债券现券、逆回购
+MsgType_snap_sse_bond   = 38  #上交所债券、可转债、逆回购
+MsgTypes_snap  = [MsgType_snap_stock, MsgType_snap_szse_bond, MsgType_snap_sse_bond]
+
+
+MsgType_heartbeat = 1
+MsgType_status_sse_bond = 83
+MsgTypes_headerOnly = [MsgType_heartbeat, MsgType_status_sse_bond]
     
 class INSTRUMENT_TYPE(Enum): # 3bit
     STOCK  = 0   #股票
@@ -72,7 +88,12 @@ class TPM():
     VolatilityBreaking = 8
     Ending = 9
     HangingUp = 10
-    Fusing = 11
+    FusingCall = 11
+    FusingEnd = 12
+
+    ContinuousAutomaticMatching = 35 #连续自动撮合，上海债券市场状态中没有时戳，所以分不开上下午
+    Closing = 24 #闭市，上海债券市场状态中在15:00:00之后
+    OffMarket = 99     #未上市，上海债券市场状态独有
 
     Unknown = -1
 
@@ -88,7 +109,11 @@ class TPM():
         Ending : '已闭市',
         VolatilityBreaking : '波动性中断',
         HangingUp : '停牌',
-        Fusing : '熔断时段',
+        FusingCall : '熔断时段（盘中集合竞价）',
+        FusingEnd : '熔断时段（暂停交易至闭市）',
+        ContinuousAutomaticMatching: '连续自动撮合',
+        Closing: '闭市',
+        OffMarket: '未上市',
         Unknown : '未知',
     }
 
@@ -97,19 +122,47 @@ class TPM():
 
 class TPI():
     # TradingPhase of Instrument，标的交易状态内部编码
-    Normal = 0
+    Normal = 0   #深圳/上海的原始值中，Normal和NoTrade是互相颠倒的；这里是深圳的值；上海1=Normal,0=NoTrade。
     NoTrade = 1
 
-    Unknown = -1
+    Unknown = 3
 
     TPI_str = {
         Normal : '正常交易',
         NoTrade : '不可交易',
         Unknown : '未知',
     }
-    def str(tpm):
-        return TPI.TPI_str[tpm]
+    def str(tpi):
+        return TPI.TPI_str[tpi]
 
+class TPC2():
+    # TradingPhase of Code[2] (上海L2股票/基金/债券), 4b
+    OffMarket = 0
+    OnMarket = 1
+
+    Unknown = 15
+
+    TPC2_str = {
+        OffMarket : '未上市',
+        OnMarket : '已上市',
+        Unknown : '未知',
+    }
+    def str(tpc2):
+        return TPC2.TPC2_str[tpc2]
+class TPC3():
+    # TradingPhase of Code[3] (上海L2), 2b
+    RejectOrder = 0
+    AcceptOrder = 1
+
+    Unknown = 3
+
+    TPC3_str = {
+        RejectOrder : '不接受订单申报',
+        AcceptOrder : '可接受订单申报',
+        Unknown : '未知',
+    }
+    def str(tpc3):
+        return TPC3.TPC3_str[tpc3]
 
 class axsbe_base(metaclass=abc.ABCMeta):
     '''
@@ -142,8 +195,19 @@ class axsbe_base(metaclass=abc.ABCMeta):
         if self._HHMMSSms is None:
             if self.SecurityIDSource == SecurityIDSource_SZSE:
                 self._HHMMSSms = self.TransactTime % 1000000000
+            elif self.SecurityIDSource == SecurityIDSource_SSE:
+                if self.MsgType==MsgType_order_stock or self.MsgType==MsgType_exe_stock: #精度10ms
+                    self._HHMMSSms = self.TransactTime * 10
+                elif self.MsgType==MsgType_snap_stock: #精度秒
+                    self._HHMMSSms = self.TransactTime * 1000
+                elif self.MsgType==MsgType_snap_sse_bond or self.MsgType==MsgType_order_sse_bond_del or self.MsgType==MsgType_order_sse_bond_add or self.MsgType==MsgType_exe_sse_bond: #精度ms
+                    self._HHMMSSms = self.TransactTime
+                elif self.MsgType==MsgType_heartbeat or self.MsgType==MsgType_status_sse_bond:
+                    self._HHMMSSms = 0 #没有时戳
+                else:
+                    raise Exception(f'Not support SSE MsgType={self.MsgType}')
             else:
-                '''TODO-SSE'''
+                raise Exception(f'Not support SecurityIDSource={self.SecurityIDSource}')
         return self._HHMMSSms
 
     @property

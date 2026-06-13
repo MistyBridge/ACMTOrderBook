@@ -54,11 +54,11 @@ def run(data_file):
     print(f"\nOrderBook State:")
     print(f"  orderMap={axob.order_map_size} bidTree={axob.bid_level_tree_size} askTree={axob.ask_level_tree_size}")
     print(f"  bidMax={axob.bid_level_tree_max}  askMin={axob.ask_level_tree_min}")
-    print(f"  LastPx={axob.LastPx} HighPx={axob.HighPx} LowPx={axob.LowPx} OpenPx={axob.OpenPx}")
+    print(f"  LastPx={axob.LastPx//100} HighPx={axob.HighPx} LowPx={axob.LowPx} OpenPx={axob.OpenPx}")
     print(f"  NumTrades={axob.NumTrades} TVol={axob.TotalVolumeTrade} TVal={axob.TotalValueTrade}")
     print(f"  tradingPhase={axob.tradingPhaseMarket}")
 
-    ask, bid = axob.getLevels(5)
+    ask, bid = axob._getLevels(5)
     print(f"\n--- 5 Level OrderBook ---")
     for i in range(4, -1, -1):
         if i in ask and ask[i].qty > 0:
