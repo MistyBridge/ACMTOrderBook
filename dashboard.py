@@ -22,8 +22,8 @@ else:
     PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 PY_EXE    = os.path.join(PROJECT_DIR, "py", "main.exe")
-CPP_EXE   = os.path.join(PROJECT_DIR, "cpp", "orderbook.exe")
-DATA_FILE = os.path.join(PROJECT_DIR, "data", "20220422", "AX_sbe_szse_000001.log")
+CPP_EXE   = os.path.join(PROJECT_DIR, "cpp v2", "orderbook_v2.1.exe")
+DATA_FILE = os.path.join(PROJECT_DIR, "cpp v2", "test_data.log")
 
 # ──────────────────── theme ────────────────────
 TH = {
