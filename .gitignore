@@ -7,3 +7,4 @@ dist/
 !Dashboard.exe
 data/**/*.log
 py/log/
+test_data.log

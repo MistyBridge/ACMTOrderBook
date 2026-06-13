@@ -12,17 +12,38 @@
 
 ---
 
+## 版本说明
+
+### CPP v1 — 单线程版本
+基础 C++ 重写，包含完整的订单簿功能实现。
+
+### CPP v2 — 多线程优化版本 🚀
+基于 v1 进行多线程优化，包含 7 项核心优化：
+- **SPSC 无锁队列**：生产者-消费者线程间数据传输
+- **内存池**：减少动态内存分配开销
+- **缓存行填充**：防止 false sharing
+- **批量处理**：减少原子操作开销
+- **CPU 亲和性绑定**：生产者/消费者绑定不同物理核心
+- **延迟测量**：p50/p99/p99.9/pmax 全链路延迟统计
+- **编译器优化**：-O3 -march=native -flto
+
+---
+
 ## 性能对比
 
 测试数据：深交所 000001（平安银行）2022-04-22 全日 L2 逐笔行情，共 **233,875 条消息**。
 
-| 指标 | Python | C++ (-O0) | 提升 |
-|------|--------|-----------|------|
-| 总耗时 | 61.4 s | 2.4 s | **25.6×** |
-| 吞吐量 | 3,112 msg/s | 98,992 msg/s | **31.8×** |
-| 重建结果 | ✓ 正确 | ✓ 正确 | 完全一致 |
+| 指标 | Python | C++ v1 (-O0) | C++ v2 (-O2) | 提升 (v2 vs v1) |
+|------|--------|--------------|--------------|-----------------|
+| 总耗时 | 61.4 s | 2.4 s | 1.4 s | **+42%** |
+| 吞吐量 | 3,112 msg/s | 64,613 msg/s | 95,455 msg/s | **+47.7%** |
+| p50 延迟 | - | - | 0.3 μs | - |
+| p99 延迟 | - | - | 71.5 μs | - |
+| p99.9 延迟 | - | - | 521.8 μs | - |
+| pmax 延迟 | - | - | 957.3 μs | - |
+| 重建结果 | ✓ 正确 | ✓ 正确 | ✓ 正确 | 完全一致 |
 
-> 两者产生完全相同的订单簿状态：`NumTrades=81049 LastPx=1606 HighPx=1619 LowPx=1540`
+> 三者产生完全相同的订单簿状态：`NumTrades=81049 LastPx=1606 HighPx=1619 LowPx=1540`
 
 ---
 
@@ -37,9 +58,16 @@ ACMTOrderBook/
 │   ├── main.exe           ← Python 编译产物
 │   ├── behave/            ← 订单簿引擎核心
 │   └── tool/              ← 消息解析工具
-├── cpp/
-│   ├── main.cpp           ← C++ 入口
-│   ├── orderbook.exe      ← C++ 编译产物
+├── cpp v1/                ← 单线程版本
+│   ├── main.cpp           ← C++ v1 入口
+│   ├── CMakeLists.txt
+│   ├── behave/            ← 订单簿引擎核心
+│   └── tool/              ← 消息解析工具
+├── cpp v2/                ← 多线程优化版本
+│   ├── main.cpp           ← C++ v2 入口
+│   ├── CMakeLists.txt
+│   ├── core/              ← 基础组件 (SPSC队列、内存池、缓存行、CPU亲和性、延迟统计)
+│   ├── pipeline/          ← 管道架构 (生产者/消费者)
 │   ├── behave/            ← 订单簿引擎核心
 │   └── tool/              ← 消息解析工具
 ├── data/
@@ -82,21 +110,36 @@ ACMTOrderBook/
 # Python
 python py/main.py [数据文件路径]
 
-# C++（需先编译）
-cd cpp && g++ -std=c++17 -O0 -I. -o orderbook.exe main.cpp behave/*.cpp
+# C++ v1（需先编译）
+cd "cpp v1" && g++ -std=c++17 -O0 -I. -o orderbook.exe main.cpp behave/*.cpp
 ./orderbook.exe [数据文件路径]
+
+# C++ v2（需先编译）
+cd "cpp v2" && g++ -std=c++17 -O2 -march=native -DNDEBUG -I. -o orderbook_v2.exe main.cpp pipeline/*.cpp behave/*.cpp tool/msg_util.cpp -lpthread
+./orderbook_v2.exe [数据文件路径] [生产者核心] [消费者核心] [队列容量] [批次大小]
 ```
 
 ---
 
 ## C++ 重写要点
 
+### 基础架构
 - **模块化设计**：拆分为 `axob_init`、`axob_order`、`axob_trade`、`axob_cage`、`axob_snap` 五个模块
 - **数据结构**：`std::map` 价格档有序树 + `std::unordered_map` 订单 O(1) 查表
 - **精度处理**：深交所逐笔委托 4 位小数 → 内部 2 位精度计算
 - **创业板价格笼子**：300xxx 股票 ±2% 价格笼子完整实现
 - **交易阶段**：OpenCall / AMTrading / PMTrading / CloseCall 全阶段覆盖
 - **关键修正**：订单簿不从 orderMap 中删除已成交订单（与原 Python 行为一致）
+
+### CPP v2 多线程优化
+- **SPSC 无锁队列**：基于位掩码的环形缓冲区，避免模运算开销
+- **内存池**：侵入式空闲链表，2x 增长策略，减少内存碎片
+- **缓存行对齐**：`alignas(64)` 防止 false sharing
+- **批量处理**：每批最多 64 条消息，减少原子操作次数
+- **CPU 亲和性**：生产者绑定 Core 0，消费者绑定 Core 2
+- **延迟统计**：环形缓冲区 + nth_element 实现 O(n) 分位数计算
+- **编译器优化**：-O3 -march=native -flto -DNDEBUG
+- **字段重排**：ObOrder 从 40B 压缩到 32B，ObExec 优化到 40B
 
 详细设计文档：[doc/cpp/plan.md](doc/cpp/plan.md)
 
