@@ -130,15 +130,15 @@ void AXOB::insertOrder(const ObOrder& order, bool outOfCage) {
     insertOrderMap(order.applSeqNum, order);
 
     if (order.side == Side::BID) {
-        auto it = bidLevelTree.find(order.price);
-        if (it != bidLevelTree.end()) {
-            it->second.qty += order.qty;
+        auto* node = bidLevelBook.find(order.price);
+        if (node) {
+            node->qty += order.qty;
             if (order.price == bidMaxPrice)
                 bidMaxQty += order.qty;
             if (bidCageUpperExMinQty && order.price == bidCageUpperExMinPrice)
                 bidCageUpperExMinQty += order.qty;
         } else {
-            bidLevelTree[order.price] = LevelNode(order.price, order.qty);
+            bidLevelBook.insert(order.price, order.qty);
             if (!outOfCage) {
                 if (bidMaxQty == 0 || order.price > bidMaxPrice) {
                     bidMaxPrice = order.price;
@@ -159,15 +159,15 @@ void AXOB::insertOrder(const ObOrder& order, bool outOfCage) {
             BidWeightValue += static_cast<int64_t>(order.price) * order.qty;
         }
     } else if (order.side == Side::ASK) {
-        auto it = askLevelTree.find(order.price);
-        if (it != askLevelTree.end()) {
-            it->second.qty += order.qty;
+        auto* node = askLevelBook.find(order.price);
+        if (node) {
+            node->qty += order.qty;
             if (order.price == askMinPrice)
                 askMinQty += order.qty;
             if (askCageLowerExMaxQty && order.price == askCageLowerExMaxPrice)
                 askCageLowerExMaxQty += order.qty;
         } else {
-            askLevelTree[order.price] = LevelNode(order.price, order.qty);
+            askLevelBook.insert(order.price, order.qty);
             if (!outOfCage) {
                 if (askMinQty == 0 || order.price < askMinPrice) {
                     askMinPrice = order.price;

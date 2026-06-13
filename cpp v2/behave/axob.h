@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 #include <type_traits>
+#include <cstring>     // memmove (CompactLevelBook)
 #include "ob_types.h"
 #include "../tool/axsbe_base.h"
 #include "../tool/axsbe_order.h"
@@ -64,8 +65,11 @@ public:
     // ==================== 核心数据结构 ====================
     // [v2优化] orderMap 存储 ObOrder* 指针，配合 MemoryPool 减少堆分配
     std::unordered_map<uint64_t, ObOrder*> orderMap;
-    std::map<int32_t, LevelNode>           bidLevelTree;
-    std::map<int32_t, LevelNode>           askLevelTree;
+    // [v2优化] HybridLevelBook 替代 std::map — 根据档位数量动态选择
+    // n≤256: 排序数组（连续内存，缓存友好）
+    // n>256: std::map（O(log n)，避免大数组 memmove）
+    HybridLevelBook bidLevelBook;
+    HybridLevelBook askLevelBook;
 
 #if USE_MEMORY_POOL
     // [v2优化] 内存池：外部传入时复用，否则在构造时创建
@@ -202,8 +206,8 @@ public:
     }
 
     int orderMapSize()  const { return static_cast<int>(orderMap.size()); }
-    int bidTreeSize()   const { return static_cast<int>(bidLevelTree.size()); }
-    int askTreeSize()   const { return static_cast<int>(askLevelTree.size()); }
+    int bidTreeSize()   const { return bidLevelBook.size(); }
+    int askTreeSize()   const { return askLevelBook.size(); }
     int levelTreeSize() const { return bidTreeSize() + askTreeSize(); }
 
     std::string toString() const;

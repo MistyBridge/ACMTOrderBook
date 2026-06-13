@@ -19,6 +19,7 @@ struct ProducerArg {
     const char* dataFile;
     axob::core::SPSCQueue<MarketEvent>* queue;
     ProducerStats* stats;
+    int replayCount;  // 重放次数
 };
 
 struct ConsumerArg {
@@ -30,7 +31,7 @@ struct ConsumerArg {
 
 static DWORD WINAPI producerEntry(LPVOID arg) {
     auto* a = static_cast<ProducerArg*>(arg);
-    producerThread(a->dataFile, *a->queue, *a->stats);
+    producerThread(a->dataFile, *a->queue, *a->stats, a->replayCount);
     return 0;
 }
 
@@ -47,12 +48,14 @@ Pipeline::Pipeline(const char* dataFile,
                    size_t queueCapacity,
                    size_t batchSize,
                    int producerCore,
-                   int consumerCore)
+                   int consumerCore,
+                   int replayCount)
     : dataFile_(dataFile)
     , queueCapacity_(queueCapacity)
     , batchSize_(batchSize)
     , producerCore_(producerCore)
     , consumerCore_(consumerCore)
+    , replayCount_(replayCount)
 {}
 
 // =====================================================================
@@ -73,7 +76,7 @@ void Pipeline::run() {
     ConsumerStats consumerStats;
 
     // 线程参数（栈上，生命周期覆盖线程运行期间）
-    ProducerArg pArg{dataFile_, &queue, &producerStats};
+    ProducerArg pArg{dataFile_, &queue, &producerStats, replayCount_};
     ConsumerArg cArg{&queue, &axob, &latency, &consumerStats};
 
     // 记录开始时间

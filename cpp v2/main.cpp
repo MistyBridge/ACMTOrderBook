@@ -9,15 +9,21 @@ int main(int argc, char* argv[]) {
     int consumerCore        = (argc > 3) ? atoi(argv[3]) : 2;
     size_t queueCapacity    = (argc > 4) ? (size_t)atol(argv[4]) : 16384;
     size_t batchSize        = (argc > 5) ? (size_t)atol(argv[5]) : 64;
+    int replayCount         = (argc > 6) ? atoi(argv[6]) : 1;  // 重放次数，默认1次
+
+    // 重放次数限制
+    if (replayCount < 1) replayCount = 1;
+    if (replayCount > 1000) replayCount = 1000;
 
     // 打印启动信息
     printf("[v2] Multi-threaded OrderBook Engine\n");
     printf("[v2] Queue capacity: %zu, Batch size: %zu\n", queueCapacity, batchSize);
     printf("[v2] Producer -> Core %d, Consumer -> Core %d\n", producerCore, consumerCore);
+    printf("[v2] Replay count: %d\n", replayCount);
     fflush(stdout);
 
     // 创建并运行 Pipeline
-    Pipeline pipeline(dataFile, queueCapacity, batchSize, producerCore, consumerCore);
+    Pipeline pipeline(dataFile, queueCapacity, batchSize, producerCore, consumerCore, replayCount);
     pipeline.run();
 
     return 0;

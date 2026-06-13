@@ -114,7 +114,7 @@ void AXOB::clipSnap(AxsbeSnapStock& snap) {
 }
 
 // ---- 内部精度转快照精度 ----
-static int32_t fmtPrice(int32_t price, InstrumentType instType, SecurityIDSource src) {
+[[maybe_unused]] static int32_t fmtPrice(int32_t price, InstrumentType instType, SecurityIDSource src) {
     if (src == SecurityIDSource_SZSE) {
         if (instType == InstrumentType::STOCK)
             return price * (PRICE_SZSE_SNAP_PRECISION / PRICE_INTER_STOCK_PRECISION);
@@ -134,40 +134,24 @@ std::pair<std::map<int32_t,LevelNode>, std::map<int32_t,LevelNode>>
 AXOB::getLevels(int levelNb) {
     std::map<int32_t,LevelNode> askResult, bidResult;
 
-    // 卖方：从小到大
-    int32_t p = askMinPrice;
-    int32_t q = askMinQty;
-    for (int i = 0; i < levelNb; i++) {
-        if (q != 0) {
-            askResult[i] = LevelNode(p, q);  // 内部精度，不做 snap 转换
-            // 找下一个更高的卖方档位
-            q = 0;
-            auto it = askLevelTree.upper_bound(p);
-            if (it != askLevelTree.end()) {
-                p = it->first;
-                q = it->second.qty;
-            }
-        } else {
-            askResult[i] = LevelNode(0, 0);
+    // 卖方：从小到大（CompactLevelBook 已按升序排列）
+    {
+        int idx = 0;
+        for (int i = 0; i < askLevelBook.count && idx < levelNb; i++) {
+            askResult[idx] = askLevelBook.levels[i];
+            idx++;
         }
+        for (; idx < levelNb; idx++) askResult[idx] = LevelNode(0, 0);
     }
 
-    // 买方：从大到小
-    p = bidMaxPrice;
-    q = bidMaxQty;
-    for (int i = 0; i < levelNb; i++) {
-        if (q != 0) {
-            bidResult[i] = LevelNode(p, q);  // 内部精度，不做 snap 转换
-            q = 0;
-            auto it = bidLevelTree.lower_bound(p);
-            if (it != bidLevelTree.begin()) {
-                --it;
-                p = it->first;
-                q = it->second.qty;
-            }
-        } else {
-            bidResult[i] = LevelNode(0, 0);
+    // 买方：从大到小（CompactLevelBook 升序，反向遍历）
+    {
+        int idx = 0;
+        for (int i = bidLevelBook.count - 1; i >= 0 && idx < levelNb; i--) {
+            bidResult[idx] = bidLevelBook.levels[i];
+            idx++;
         }
+        for (; idx < levelNb; idx++) bidResult[idx] = LevelNode(0, 0);
     }
 
     return {askResult, bidResult};

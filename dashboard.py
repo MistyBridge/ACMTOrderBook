@@ -95,6 +95,7 @@ class Dashboard(tk.Tk):
             ("Python 入口",  "py_main",  PY_EXE, True),
             ("C++ 入口",     "cpp_exe",  CPP_EXE, True),
             ("数据文件", "data",  DATA_FILE, True),
+            ("重放次数", "replay",  "1", True),
         ]
         for i, (label, key, default, editable) in enumerate(rows):
             r = tk.Frame(fr, bg=TH["panel"])
@@ -106,8 +107,13 @@ class Dashboard(tk.Tk):
                            bg="#1e1e2e", fg=TH["text"], insertbackground=TH["text"],
                            relief="flat", state="normal" if editable else "readonly")
             ent.pack(side="left", fill="x", expand=True, padx=(6, 6))
-            tk.Button(r, text="浏览", font=("Consolas", 8),
-                      command=lambda v=var, k=key: self._browse(v, k)).pack(side="left")
+            if key != "replay":  # 重放次数不需要浏览按钮
+                tk.Button(r, text="浏览", font=("Consolas", 8),
+                          command=lambda v=var, k=key: self._browse(v, k)).pack(side="left")
+            else:
+                # 重放次数提示
+                tk.Label(r, text="(1-1000)", font=("Consolas", 8),
+                         fg=TH["dim"], bg=TH["panel"]).pack(side="left", padx=5)
             self.cfg_vars[key] = var
 
         # bottom padding
@@ -229,6 +235,18 @@ class Dashboard(tk.Tk):
 
         # build command from current config values
         data = self.cfg_vars["data"].get()
+        replay = self.cfg_vars["replay"].get()
+
+        # 验证重放次数
+        try:
+            replay_count = int(replay)
+            if replay_count < 1:
+                replay_count = 1
+            elif replay_count > 1000:
+                replay_count = 1000
+        except ValueError:
+            replay_count = 1
+
         if key == "py":
             py_main = self.cfg_vars["py_main"].get()
             cmd = [py_main, data]
@@ -236,7 +254,8 @@ class Dashboard(tk.Tk):
             env = None
         else:
             cpp = self.cfg_vars["cpp_exe"].get()
-            cmd = [cpp, data]
+            # C++ 可执行文件参数：data producerCore consumerCore queueCapacity batchSize replayCount
+            cmd = [cpp, data, "0", "2", "16384", "64", str(replay_count)]
             cwd = os.path.dirname(cpp) or PROJECT_DIR
             env = None
 
@@ -265,10 +284,13 @@ class Dashboard(tk.Tk):
         self._log(f"\n{'='*60}")
         self._log(f"  [{r.name}] start  {time.strftime('%H:%M:%S')}")
         self._log(f"  CMD: {' '.join(cmd)}")
+        if replay_count > 1:
+            self._log(f"  Replay: {replay_count} times")
         self._log(f"{'='*60}")
 
         r.start_time = time.time()
         r._cmd, r._cwd, r._env = cmd, cwd, env
+        r._replay_count = replay_count  # 存储重放次数用于进度计算
         threading.Thread(target=self._run_thread, args=(r,), daemon=True).start()
 
     def _run_thread(self, r):
@@ -311,20 +333,29 @@ class Dashboard(tk.Tk):
 
     # ── line parser (regex-based, supports both py & cpp output) ──
     def _parse_line(self, r, line):
+        # 计算总消息数（考虑重放次数）
+        replay_count = getattr(r, '_replay_count', 1)
+        total_msgs = 233875 * replay_count
+
         # progress (py: "  50,000 msgs  |  15.2s  |  3,289 msg/s")
         m = re.search(r"([\d,]+)\s+msgs?\s+\|\s+([\d.]+)s\s+\|\s+([\d,]+)\s+msg/s", line)
         if m:
             total_str = m.group(1).replace(",", "")
             try:
                 total_now = int(total_str)
-                r.progress = min(total_now / 233875 * 100, 99.9)
+                r.progress = min(total_now / total_msgs * 100, 99.9)
             except ValueError:
                 pass
 
         # cpp progress (cpp: "processed 50000 msgs ...")
         m = re.search(r"processed\s+(\d+)\s+msgs", line)
         if m:
-            r.progress = min(int(m.group(1)) / 233875 * 100, 99.9)
+            r.progress = min(int(m.group(1)) / total_msgs * 100, 99.9)
+
+        # cpp progress (v2: "produced 50000 msgs...")
+        m = re.search(r"produced\s+(\d+)\s+msgs", line)
+        if m:
+            r.progress = min(int(m.group(1)) / total_msgs * 100, 99.9)
 
         # timing (cpp: "Time: 2.5 s (98992 msg/s)")
         m2 = re.search(r"Time:\s+([\d.]+)\s*s\s*\((\d+)\s*msg/s\)", line)

@@ -30,7 +30,8 @@ public:
              size_t queueCapacity = 16384,
              size_t batchSize = 64,
              int producerCore = 0,
-             int consumerCore = 2);
+             int consumerCore = 2,
+             int replayCount = 1);  // 重放次数
 
     // 启动管道，阻塞直到处理完毕
     void run();
@@ -44,5 +45,6 @@ private:
     size_t batchSize_;
     int producerCore_;
     int consumerCore_;
+    int replayCount_;  // 重放次数
     Result result_;
 };

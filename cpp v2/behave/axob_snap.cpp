@@ -176,15 +176,15 @@ AxsbeSnapStock AXOB::genCallSnap(int showLevelNb) {
             if (bidQty == 0) {
                 if (askQty != 0) price = _ask_p;
                 _bid_q = 0;
-                for (auto rit = bidLevelTree.rbegin(); rit != bidLevelTree.rend(); ++rit) {
-                    if (rit->first < _bid_p) { _bid_p = rit->first; _bid_q = rit->second.qty; break; }
+                for (int i = bidLevelBook.count - 1; i >= 0; i--) {
+                    if (bidLevelBook.levels[i].price < _bid_p) { _bid_p = bidLevelBook.levels[i].price; _bid_q = bidLevelBook.levels[i].qty; break; }
                 }
             }
             if (askQty == 0) {
                 if (bidQty != 0) price = _bid_p;
                 _ask_q = 0;
-                for (auto& [p, l] : askLevelTree) {
-                    if (p > _ask_p) { _ask_p = p; _ask_q = l.qty; break; }
+                for (int i = 0; i < askLevelBook.count; i++) {
+                    if (askLevelBook.levels[i].price > _ask_p) { _ask_p = askLevelBook.levels[i].price; _ask_q = askLevelBook.levels[i].qty; break; }
                 }
             }
         } else {
@@ -245,24 +245,23 @@ AxsbeSnapStock AXOB::genTradingSnap(bool isVolBreaking, int levelNb) {
     snap.secSrc = secSrc;
     snap.securityID = SecurityID;
 
-    // 买方档位（从大到小）
+    // 买方档位（从大到小，CompactLevelBook 升序，反向遍历）
     int lv = 0;
     if (!isVolBreaking) {
-        for (auto rit = bidLevelTree.rbegin(); rit != bidLevelTree.rend() && lv < levelNb; ++rit) {
-            if (bidCageUpperExMinQty == 0 || rit->first < bidCageUpperExMinPrice) {
-                snap.bid[lv++] = PriceLevel(fmtPx(rit->first, instType, secSrc), rit->second.qty);
+        for (int i = bidLevelBook.count - 1; i >= 0 && lv < levelNb; i--) {
+            if (bidCageUpperExMinQty == 0 || bidLevelBook.levels[i].price < bidCageUpperExMinPrice) {
+                snap.bid[lv++] = PriceLevel(fmtPx(bidLevelBook.levels[i].price, instType, secSrc), bidLevelBook.levels[i].qty);
             }
         }
     }
     for (int i = lv; i < levelNb; i++) snap.bid[i] = PriceLevel(0, 0);
 
-    // 卖方档位（从小到大）
+    // 卖方档位（从小到大，CompactLevelBook 升序，正向遍历）
     lv = 0;
     if (!isVolBreaking) {
-        for (auto& [p, l] : askLevelTree) {
-            if (lv >= levelNb) break;
-            if (askCageLowerExMaxQty == 0 || p > askCageLowerExMaxPrice) {
-                snap.ask[lv++] = PriceLevel(fmtPx(p, instType, secSrc), l.qty);
+        for (int i = 0; i < askLevelBook.count && lv < levelNb; i++) {
+            if (askCageLowerExMaxQty == 0 || askLevelBook.levels[i].price > askCageLowerExMaxPrice) {
+                snap.ask[lv++] = PriceLevel(fmtPx(askLevelBook.levels[i].price, instType, secSrc), askLevelBook.levels[i].qty);
             }
         }
     }

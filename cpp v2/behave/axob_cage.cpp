@@ -17,11 +17,12 @@ void AXOB::openCage() {
 
         bidCageUpperExMinQty = 0;
         // 从小到大找下一个更高的隐藏订单
-        for (auto& [p, l] : bidLevelTree) {
+        for (int i = 0; i < bidLevelBook.count; i++) {
+            int32_t p = bidLevelBook.levels[i].price;
             if (p > bidMaxPrice && (bidCageUpperExMinQty == 0 || p < bidCageUpperExMinPrice)) {
                 if (p > bidCageRefPx) {
                     bidCageUpperExMinPrice = p;
-                    bidCageUpperExMinQty   = l.qty;
+                    bidCageUpperExMinQty   = bidLevelBook.levels[i].qty;
                 }
             }
         }
@@ -38,11 +39,12 @@ void AXOB::openCage() {
 
         askCageLowerExMaxQty = 0;
         // 从大到小找下一个更低的隐藏订单
-        for (auto rit = askLevelTree.rbegin(); rit != askLevelTree.rend(); ++rit) {
-            if (rit->first < askMinPrice && (askCageLowerExMaxQty == 0 || rit->first > askCageLowerExMaxPrice)) {
-                if (rit->first < askCageRefPx) {
-                    askCageLowerExMaxPrice = rit->first;
-                    askCageLowerExMaxQty   = rit->second.qty;
+        for (int i = askLevelBook.count - 1; i >= 0; i--) {
+            int32_t p = askLevelBook.levels[i].price;
+            if (p < askMinPrice && (askCageLowerExMaxQty == 0 || p > askCageLowerExMaxPrice)) {
+                if (p < askCageRefPx) {
+                    askCageLowerExMaxPrice = p;
+                    askCageLowerExMaxQty   = askLevelBook.levels[i].qty;
                 }
             }
         }
@@ -66,10 +68,10 @@ void AXOB::enterCage() {
                 askWaitingForCage = (mktSubType == MarketSubType::SZSE_STK_GEM);
 
                 bidCageUpperExMinQty = 0;
-                for (auto& [p, l] : bidLevelTree) {
-                    if (p > bidCageUpperExMinPrice) {
-                        bidCageUpperExMinPrice = p;
-                        bidCageUpperExMinQty   = l.qty;
+                for (int i = 0; i < bidLevelBook.count; i++) {
+                    if (bidLevelBook.levels[i].price > bidCageUpperExMinPrice) {
+                        bidCageUpperExMinPrice = bidLevelBook.levels[i].price;
+                        bidCageUpperExMinQty   = bidLevelBook.levels[i].qty;
                         break;
                     }
                 }
@@ -91,10 +93,10 @@ void AXOB::enterCage() {
                 bidWaitingForCage = (mktSubType == MarketSubType::SZSE_STK_GEM);
 
                 askCageLowerExMaxQty = 0;
-                for (auto rit = askLevelTree.rbegin(); rit != askLevelTree.rend(); ++rit) {
-                    if (rit->first < askCageLowerExMaxPrice) {
-                        askCageLowerExMaxPrice = rit->first;
-                        askCageLowerExMaxQty   = rit->second.qty;
+                for (int i = askLevelBook.count - 1; i >= 0; i--) {
+                    if (askLevelBook.levels[i].price < askCageLowerExMaxPrice) {
+                        askCageLowerExMaxPrice = askLevelBook.levels[i].price;
+                        askCageLowerExMaxQty   = askLevelBook.levels[i].qty;
                         break;
                     }
                 }

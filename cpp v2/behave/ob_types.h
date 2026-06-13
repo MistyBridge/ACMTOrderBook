@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <cstring>       // std::memmove (HybridLevelBook)
 #include <type_traits>   // std::is_trivially_copyable_v
 #include "../tool/axsbe_base.h"
 #include "../tool/axsbe_order.h"
@@ -210,6 +211,203 @@ inline int32_t clipInt32(int64_t x) {
 }
 
 // =====================================================================
+//  HybridLevelBook — 混合价格档位簿（替代 std::map<int32_t, LevelNode>）
+//
+//  根据档位数量动态选择存储方式：
+//    n ≤ 256 : 排序数组（连续内存，CPU 预取命中，无指针追逐）
+//    n > 256 : std::map 红黑树（O(log n) insert/erase，避免大数组 memmove）
+//
+//  交叉点分析：
+//    - 数组 find:  O(n) 但顺序访问完美预取，n=256 时 ~100ns
+//    - 树 find:    O(log n) 但每次指针追逐可能 cache miss，n=256 时 ~400-800ns
+//    - 数组 insert: memmove ~128 节点 ≈ 200-400ns（顺序写，带宽受限）
+//    - 树 insert:  8 次指针追逐 + 旋转 ≈ 400-800ns（随机访问，cache miss 受限）
+//    → n ≤ 256 时数组全面胜出
+//
+//  切换策略：
+//    - insert 时 array 模式且 count 达到 256 → 迁移到 map
+//    - erase 时 map 模式且 count 降至 128（2× 滞后防抖动）→ 迁移回 array
+//
+//  接口兼容性：
+//    - levels[] / count 直接访问（仅 array 模式安全，map 模式由迁移保证）
+//    - find() / insert() / erase() / modifyQty() 模式无关
+//    - for_each() / rfor_each() 模式无关的遍历接口
+//    - toSortedArray() / toSortedArrayDesc() map 模式转数组快照
+// =====================================================================
+
+#include <map>  // std::map 用于大 n 回退
+
+static constexpr int HYBRID_ARRAY_MAX    = 256;   // 超过此值切 map
+static constexpr int HYBRID_ARRAY_RESUME = 128;   // 低于此值切回 array
+
+struct HybridLevelBook {
+    bool useMap = false;  // false = 排序数组模式, true = std::map 模式
+
+    // ---- 排序数组模式（直接访问，兼容现有代码）----
+    LevelNode levels[HYBRID_ARRAY_MAX];
+    int       count = 0;
+
+    // ---- std::map 模式（大 n 回退）----
+    std::map<int32_t, LevelNode> treeLevels;
+
+    // ================================================================
+    //  find() — 查找指定价格的档位（模式无关）
+    // ================================================================
+    LevelNode* find(int32_t price) {
+        if (LIKELY(!useMap)) {
+            for (int i = 0; i < count; i++) {
+                if (levels[i].price == price) return &levels[i];
+            }
+            return nullptr;
+        } else {
+            auto it = treeLevels.find(price);
+            return (it != treeLevels.end()) ? &it->second : nullptr;
+        }
+    }
+    const LevelNode* find(int32_t price) const {
+        if (LIKELY(!useMap)) {
+            for (int i = 0; i < count; i++) {
+                if (levels[i].price == price) return &levels[i];
+            }
+            return nullptr;
+        } else {
+            auto it = treeLevels.find(price);
+            return (it != treeLevels.end()) ? &it->second : nullptr;
+        }
+    }
+
+    // ================================================================
+    //  insert() — 插入新档位（维持升序排列，模式无关）
+    // ================================================================
+    LevelNode* insert(int32_t price, int32_t qty) {
+        if (LIKELY(!useMap)) {
+            if (UNLIKELY(count >= HYBRID_ARRAY_MAX)) {
+                migrateToMap();
+                auto [it, ok] = treeLevels.emplace(price, LevelNode(price, qty));
+                return &it->second;
+            }
+            int lo = 0, hi = count;
+            while (lo < hi) {
+                int mid = lo + (hi - lo) / 2;
+                if (levels[mid].price < price) lo = mid + 1;
+                else hi = mid;
+            }
+            if (lo < count) {
+                std::memmove(&levels[lo + 1], &levels[lo],
+                             (count - lo) * sizeof(LevelNode));
+            }
+            levels[lo] = LevelNode(price, qty);
+            count++;
+            return &levels[lo];
+        } else {
+            auto [it, ok] = treeLevels.emplace(price, LevelNode(price, qty));
+            return &it->second;
+        }
+    }
+
+    // ================================================================
+    //  erase() — 删除指定价格的档位（模式无关）
+    // ================================================================
+    void erase(int32_t price) {
+        if (LIKELY(!useMap)) {
+            for (int i = 0; i < count; i++) {
+                if (levels[i].price == price) {
+                    if (i < count - 1) {
+                        std::memmove(&levels[i], &levels[i + 1],
+                                     (count - 1 - i) * sizeof(LevelNode));
+                    }
+                    count--;
+                    return;
+                }
+            }
+        } else {
+            treeLevels.erase(price);
+            if (static_cast<int>(treeLevels.size()) <= HYBRID_ARRAY_RESUME) {
+                migrateToArray();
+            }
+        }
+    }
+
+    // ================================================================
+    //  modifyQty() — 修改指定价格档位的数量（模式无关，热路径）
+    // ================================================================
+    bool modifyQty(int32_t price, int32_t delta) {
+        if (LIKELY(!useMap)) {
+            for (int i = 0; i < count; i++) {
+                if (levels[i].price == price) {
+                    levels[i].qty += delta;
+                    return true;
+                }
+            }
+            return false;
+        } else {
+            auto it = treeLevels.find(price);
+            if (it != treeLevels.end()) {
+                it->second.qty += delta;
+                return true;
+            }
+            return false;
+        }
+    }
+
+    // ================================================================
+    //  size() — 当前档位数量（模式无关）
+    // ================================================================
+    int size() const {
+        return useMap ? static_cast<int>(treeLevels.size()) : count;
+    }
+
+    // ================================================================
+    //  模式无关遍历接口 — forward（卖方：小→大）
+    //  void fn(const LevelNode& node)
+    // ================================================================
+    template<typename Fn>
+    void for_each(Fn&& fn) const {
+        if (LIKELY(!useMap)) {
+            for (int i = 0; i < count; i++) fn(levels[i]);
+        } else {
+            for (auto& [p, l] : treeLevels) fn(l);
+        }
+    }
+
+    // ================================================================
+    //  模式无关遍历接口 — reverse（买方：大→小）
+    // ================================================================
+    template<typename Fn>
+    void rfor_each(Fn&& fn) const {
+        if (LIKELY(!useMap)) {
+            for (int i = count - 1; i >= 0; i--) fn(levels[i]);
+        } else {
+            for (auto it = treeLevels.rbegin(); it != treeLevels.rend(); ++it)
+                fn(it->second);
+        }
+    }
+
+    // ================================================================
+    //  迁移：array → map
+    // ================================================================
+    void migrateToMap() {
+        treeLevels.clear();
+        for (int i = 0; i < count; i++) {
+            treeLevels.emplace(levels[i].price, levels[i]);
+        }
+        useMap = true;
+    }
+
+    // ================================================================
+    //  迁移：map → array
+    // ================================================================
+    void migrateToArray() {
+        count = 0;
+        for (auto& [p, l] : treeLevels) {
+            levels[count++] = l;
+        }
+        treeLevels.clear();
+        useMap = false;
+    }
+};
+
+// =====================================================================
 //  静态断言：确保结构体可 trivially copy（内存池 / memcpy 安全）
 // =====================================================================
 static_assert(std::is_trivially_copyable_v<ObOrder>,
@@ -224,3 +422,4 @@ static_assert(sizeof(ObOrder) <= 32,
               "ObOrder should fit in 32B after field reordering");
 static_assert(sizeof(LevelNode) == 8,
               "LevelNode should be exactly 8B (two int32)");
+// 注意：HybridLevelBook 包含 std::map，不能 trivially copy

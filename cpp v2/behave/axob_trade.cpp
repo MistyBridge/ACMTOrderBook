@@ -136,11 +136,11 @@ void AXOB::tradeLimit(Side side, int32_t qty, uint64_t applSeqNum) {
     levelDequeue(side, it->second->price, qty, applSeqNum);
 }
 
-void AXOB::levelDequeue(Side side, int32_t price, int32_t qty, uint64_t applSeqNum) {
+void AXOB::levelDequeue(Side side, int32_t price, int32_t qty, [[maybe_unused]] uint64_t applSeqNum) {
     if (side == Side::BID) {
-        auto it = bidLevelTree.find(price);
-        if (it == bidLevelTree.end()) return;
-        it->second.qty -= qty;
+        auto* node = bidLevelBook.find(price);
+        if (!node) return;
+        node->qty -= qty;
         if (price == bidMaxPrice) bidMaxQty -= qty;
 
         if (bidCageUpperExMinQty == 0 || price < bidCageUpperExMinPrice) {
@@ -149,24 +149,25 @@ void AXOB::levelDequeue(Side side, int32_t price, int32_t qty, uint64_t applSeqN
         } else if (price == bidCageUpperExMinPrice) {
             bidCageUpperExMinQty -= qty;
             if (bidCageUpperExMinQty == 0) {
-                for (auto& [p, l] : bidLevelTree) {
-                    if (p > bidCageUpperExMinPrice) {
-                        bidCageUpperExMinPrice = p;
-                        bidCageUpperExMinQty   = l.qty;
+                for (int i = 0; i < bidLevelBook.count; i++) {
+                    if (bidLevelBook.levels[i].price > bidCageUpperExMinPrice) {
+                        bidCageUpperExMinPrice = bidLevelBook.levels[i].price;
+                        bidCageUpperExMinQty   = bidLevelBook.levels[i].qty;
                         break;
                     }
                 }
             }
         }
 
-        if (it->second.qty == 0) {
-            bidLevelTree.erase(it);
+        if (node->qty == 0) {
+            bidLevelBook.erase(price);
             if (price == bidMaxPrice) {
                 bidMaxQty = 0;
-                for (auto rit = bidLevelTree.rbegin(); rit != bidLevelTree.rend(); ++rit) {
-                    if (rit->first < price) {
-                        bidMaxPrice = rit->first;
-                        bidMaxQty   = rit->second.qty;
+                // CompactLevelBook 升序排列，最高买价在末尾
+                for (int i = bidLevelBook.count - 1; i >= 0; i--) {
+                    if (bidLevelBook.levels[i].price < price) {
+                        bidMaxPrice = bidLevelBook.levels[i].price;
+                        bidMaxQty   = bidLevelBook.levels[i].qty;
                         break;
                     }
                 }
@@ -181,9 +182,9 @@ void AXOB::levelDequeue(Side side, int32_t price, int32_t qty, uint64_t applSeqN
             }
         }
     } else {
-        auto it = askLevelTree.find(price);
-        if (it == askLevelTree.end()) return;
-        it->second.qty -= qty;
+        auto* node = askLevelBook.find(price);
+        if (!node) return;
+        node->qty -= qty;
         if (price == askMinPrice) askMinQty -= qty;
 
         if (askCageLowerExMaxQty == 0 || price > askCageLowerExMaxPrice) {
@@ -197,24 +198,26 @@ void AXOB::levelDequeue(Side side, int32_t price, int32_t qty, uint64_t applSeqN
         } else if (price == askCageLowerExMaxPrice) {
             askCageLowerExMaxQty -= qty;
             if (askCageLowerExMaxQty == 0) {
-                for (auto rit = askLevelTree.rbegin(); rit != askLevelTree.rend(); ++rit) {
-                    if (rit->first < askCageLowerExMaxPrice) {
-                        askCageLowerExMaxPrice = rit->first;
-                        askCageLowerExMaxQty   = rit->second.qty;
+                // CompactLevelBook 升序，反向找更低价格
+                for (int i = askLevelBook.count - 1; i >= 0; i--) {
+                    if (askLevelBook.levels[i].price < askCageLowerExMaxPrice) {
+                        askCageLowerExMaxPrice = askLevelBook.levels[i].price;
+                        askCageLowerExMaxQty   = askLevelBook.levels[i].qty;
                         break;
                     }
                 }
             }
         }
 
-        if (it->second.qty == 0) {
-            askLevelTree.erase(it);
+        if (node->qty == 0) {
+            askLevelBook.erase(price);
             if (price == askMinPrice) {
                 askMinQty = 0;
-                for (auto& [p, l] : askLevelTree) {
-                    if (p > price) {
-                        askMinPrice = p;
-                        askMinQty   = l.qty;
+                // CompactLevelBook 升序，最小卖价在开头
+                for (int i = 0; i < askLevelBook.count; i++) {
+                    if (askLevelBook.levels[i].price > price) {
+                        askMinPrice = askLevelBook.levels[i].price;
+                        askMinQty   = askLevelBook.levels[i].qty;
                         break;
                     }
                 }
