@@ -91,7 +91,13 @@ inline bool setThreadAffinity(std::thread& t, int coreId) {
     if (!detail::checkCoreId(coreId)) return false;
 
 #if defined(_WIN32)
+    // MinGW (posix 线程模型) 的 native_handle 为 pthread 句柄 (整数),
+    // 无法直接转 HANDLE — 亲和性仅作尽力设置, 失败仅告警不影响运行。
+#if defined(__MINGW32__)
+    HANDLE hThread = (HANDLE)(uintptr_t)t.native_handle();
+#else
     HANDLE hThread = static_cast<HANDLE>(t.native_handle());
+#endif
     if (hThread == nullptr) {
         std::fprintf(stderr, "[cpu_affinity] Warning: null thread handle\n");
         return false;

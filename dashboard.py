@@ -26,7 +26,7 @@ CPP_EXE   = os.path.join(PROJECT_DIR, "cpp v2", "orderbook_v2.1.exe")
 DATA_FILE = os.path.join(PROJECT_DIR, "data", "20220422", "AX_sbe_szse_000001.log")
 
 # 基础消息数（单次重放）
-BASE_MSG_COUNT = 233875
+BASE_MSG_COUNT = 233615  # 实测文件行数 (ORDER 122,359 + EXE 106,434 + SNAP 4,822)
 
 # ──────────────────── theme ────────────────────
 TH = {
