@@ -399,9 +399,9 @@ static int64_t replayChImpl(acmt_ob_handle h,
                     k, pct(0.50), pct(0.99), pct(0.999), pct(1.0));
         }
 
-        fprintf(stderr, "REPLAYSTAT load=%.3fs fetch=%.2fs replay=%.2fs msgs=%lld (%.2fM msg/s 纯处理%s)\n",
+        fprintf(stderr, "REPLAYSTAT load=%.6fs fetch=%.6fs replay=%.6fs msgs=%lld (%.1f msg/s 纯处理%s)\n",
                 loadS, fetchSec, replayS, (long long)n,
-                replayS > 0 ? n / replayS / 1e6 : 0.0,
+                replayS > 0 ? n / replayS : 0.0,
                 validate ? ", 含校验" : "");
         return n;
     } catch (const std::exception& e) {
