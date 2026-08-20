@@ -96,8 +96,14 @@ SSE_MB/STAR/SZSE_MB/SME/GEM）与参照实现输出**逐位一致**（含审计�
 | C++ v2.6 | 1,240,251 msg/s | 0.2 μs | 213.1 μs | 503.7 μs | 558.8 μs |
 | C++ v2.7 | 1,224,407 msg/s | 0.2 μs | 29.0 μs | 94.5 μs | 119.7 μs |
 | C++ v2.8 | 1,339,869 msg/s | 0.3 μs | 82.6 μs | 601.3 μs | 799.1 μs |
+| C++ Linux (cpp_linux) | 5,200,000 msg/s | 0.08 μs | 0.36 μs | 1.49 μs | 1,680 μs |
 
 > 所有版本产生完全相同的订单簿状态：`NumTrades=810,490 LastPx=1606 HighPx=1619 LowPx=1540`
+
+**Linux 版测试口径**（2026-08 实测，同等测试数据）：
+- 数据：深交所 000001 2022-04-22 全日 L2（ClickHouse 直连，233,615 条 ORDER+TRANSACTION，与 Windows 版本地文件 233,875 条同源，差 260 条为 ORDERQUEUE 千档队列消息，引擎不需处理）
+- 模式：`replay_ch <date> <inst> <exchange> <host> <port> bench`（纯回放，快照只喂不校验）
+- 延迟为**事件级 onMsg 处理耗时**（全量计时，非采样），与 Windows 版"端到端采样"口径不同；吞吐为含延迟统计的全量计时口径（去掉统计开销可到 ~7.9M msg/s）
 
 ---
 
@@ -259,6 +265,7 @@ cmake --build build_pgo_opt --config Release --parallel 8
 | CPP v2.6 | 1,240,251 msg/s | 零分配解析 + 二分查找 + ankerl |
 | CPP v2.7 | 1,224,407 msg/s | genSnap 延迟重建 |
 | CPP v2.8 | 1,339,869 msg/s | 前向 strstr + 延迟采样 + 条件拷贝 |
+| C++ Linux | 5,200,000 msg/s | ClickHouse 直连回放 + SPSC 单流 + 全量物化 |
 
 ---
 
