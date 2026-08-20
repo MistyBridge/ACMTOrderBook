@@ -1,0 +1,2 @@
+# linguist 语言覆盖: C API 头 (extern "C" 声明) 归为 C++ 而非 C
+cpp_linux/include/acmt_orderbook.h linguist-language=C++
