@@ -4,13 +4,29 @@
 
 void AXOB::onMsg(const AxsbeExe& msg) {
     if (UNLIKELY(msg.securityID != SecurityID)) return;
+    if (UNLIKELY(isStaleData(msg.TransactTime))) return;
     // [v2优化] CYB 收盘集合竞价进入是罕见路径
     if (UNLIKELY(cageType == CageType::CYB && tradingPhase == TPM::PMTrading && msg.tradingPhaseMarket() == TPM::CloseCall)) {
         openCage();
     }
     useTimestamp(msg.TransactTime);
+    // orderMap 懒清理 (生产开关, 每 65536 条消息一次)
+    if (UNLIKELY(orderMapCleanupEnabled && (msgNb & 0xFFFF) == 0)) {
+        cleanupOrderMap(msg.TransactTime);
+    }
+    // 快照模式自愈检测: 逐笔推进时每 32 笔试一次退出 (对齐窗口稍纵即逝,
+    // 仅靠 3 秒一帧的快照到达时机检测会错过)
+    if (snapFallbackEnabled && snapRoute == SnapRoute::SNAPSHOT &&
+        (msgNb & 31) == 0 && hasReceivedSnapshot) {
+        evalSnapRoute(receivedSnapshot);
+    }
     if (LIKELY(tradingPhase != TPM::VolatilityBreaking)) {
         tradingPhase = msg.tradingPhaseMarket();
+    }
+    // 进入连续竞价时激活价格笼子 (隐藏集合竞价存量笼子外订单)
+    if (UNLIKELY(cageType == CageType::CYB && !cageSessionActive && tradingPhase == TPM::AMTrading)) {
+        activateCage();
+        cageSessionActive = true;
     }
     onExec(msg);
     msgNb++;
@@ -34,7 +50,7 @@ void AXOB::onExec(const AxsbeExe& rawExec) {
         }
         ObCancel cancel;
         cancel.applSeqNum   = cancelSeq;
-        cancel.qty          = static_cast<int32_t>(rawExec.LastQty);
+        cancel.qty          = qtySnap2Inter(rawExec.LastQty, rawExec.secSrc);
         cancel.price        = 0;
         cancel.side         = cancelSide;
         cancel.TransactTime = rawExec.TransactTime;
@@ -46,23 +62,51 @@ void AXOB::onTrade(const ObExec& exec) {
     NumTrades++;
     TotalVolumeTrade += exec.LastQty;
 
-    // [v2优化] 深交所股票是热路径
-    if (LIKELY(secSrc == SecurityIDSource_SZSE)) {
-        if (LIKELY(instType == InstrumentType::STOCK))
-            TotalValueTrade += (int64_t)exec.LastQty * exec.LastPx / (QTY_INTER_SZSE_PRECISION * PRICE_INTER_STOCK_PRECISION / TOTALVALUETRADE_SZSE_PRECISION);
-        else if (instType == InstrumentType::FUND)
-            TotalValueTrade += (int64_t)exec.LastQty * exec.LastPx / (QTY_INTER_SZSE_PRECISION * PRICE_INTER_FUND_PRECISION / TOTALVALUETRADE_SZSE_PRECISION);
-        else if (instType == InstrumentType::KZZ)
-            TotalValueTrade += (int64_t)exec.LastQty * exec.LastPx / (QTY_INTER_SZSE_PRECISION * PRICE_INTER_KZZ_PRECISION / TOTALVALUETRADE_SZSE_PRECISION);
-    } else if (secSrc == SecurityIDSource_SSE) {
-        if (instType == InstrumentType::STOCK)
-            TotalValueTrade += (int64_t)exec.LastQty * exec.LastPx / (QTY_INTER_SSE_PRECISION * PRICE_INTER_STOCK_PRECISION / TOTALVALUETRADE_SSE_PRECISION);
-    }
+    // 成交额累加 (统一定点 ×10^5, 与交易所/品种无关)。
+    // qty(×10^5) × px(×10^5) = 额(×10^10), 除 10^5 落回内部额精度 ×10^5。
+    //
+    // 必须用 __int128 承接中间乘积: 涨停封单单笔 13.2 亿股 (1.32e14) ×
+    // 高价股 (1e7) = 1.32e21, 远超 int64 上限 9.22e18。先乘后除保精度,
+    // 128 位中间量在 x86-64 上是单条 mul 指令, 热路径开销可忽略。
+    TotalValueTrade += (int64_t)((__int128)exec.LastQty * exec.LastPx
+                                 / AMT_INTER_PRECISION);
 
     LastPx = exec.LastPx;
     // [v2优化] OpenPx==0 仅首笔成交时为真
     if (UNLIKELY(OpenPx == 0)) { OpenPx = exec.LastPx; HighPx = exec.LastPx; LowPx = exec.LastPx; }
     else { if (HighPx < exec.LastPx) HighPx = exec.LastPx; if (LowPx > exec.LastPx) LowPx = exec.LastPx; }
+
+    // 价格笼子基准价 = 最新成交价 (交易所规则)。
+    // 之前沿用创业板实现的"跟随簿内最优价"更新路径: 簿顶被隐藏后参考价随之下滑,
+    // 进而误藏更多贴近市价的订单 (反馈循环)。创业板笼子同样以此为准。
+    if (cageType == CageType::CYB) {
+        bidCageRefPx = LastPx;
+        askCageRefPx = LastPx;
+    }
+
+    // 上交所连续竞价成交削减 (依 UA5803 逐笔合并流语义推导):
+    // 被动侧 = 小订单号, 必已挂起故必削减; 主动侧仅当 trade.bizIndex >
+    // order.bizIndex (剩余量已挂起) 才削减; 被动侧缺失则整笔跳过簿更新。
+    // 竞价/临停时段的成交走下方通用路径 (双侧削减)。
+    if (secSrc == SecurityIDSource_SSE &&
+        (tradingPhase == TPM::AMTrading || tradingPhase == TPM::PMTrading)) {
+        uint64_t bigNo   = (exec.BidApplSeqNum > exec.OfferApplSeqNum)
+                               ? exec.BidApplSeqNum : exec.OfferApplSeqNum;
+        uint64_t smallNo = (exec.BidApplSeqNum > exec.OfferApplSeqNum)
+                               ? exec.OfferApplSeqNum : exec.BidApplSeqNum;
+        Side passiveSide = (smallNo == exec.OfferApplSeqNum) ? Side::ASK : Side::BID;
+        const ObOrder* smallOrder = getOrder(smallNo);
+        if (smallOrder != nullptr) {
+            tradeLimit(passiveSide, exec.LastQty, smallNo);
+            const ObOrder* bigOrder = getOrder(bigNo);
+            if (bigOrder != nullptr && exec.BizIndex > bigOrder->bizIndex) {
+                tradeLimit((passiveSide == Side::ASK) ? Side::BID : Side::ASK,
+                           exec.LastQty, bigNo);
+            }
+        }
+        updateSnapStats();
+        return;
+    }
 
     // [v2优化] holdingOrder_ 现在是栈对象，不需要 nullptr 检查
     if (hasHoldingOrder_ && UNLIKELY(holdingOrder_.type == OrdType::MARKET)) {
@@ -124,53 +168,64 @@ void AXOB::onCancel(const ObCancel& cancel) {
     }
     // [v2优化] orderMap 现在存指针，需要解引用
     auto it = orderMap.find(cancel.applSeqNum);
-    if (it == orderMap.end()) return;
+    if (it == orderMap.end()) { health.orderNotFound++; return; }
     ObOrder& order = *(it->second);
+    order.qty -= cancel.qty;   // 剩余量递减 (懒清理判定)
     levelDequeue(order.side, order.price, cancel.qty, cancel.applSeqNum);
 }
 
 // [v2优化] tradeLimit: orderMap 存 ObOrder* 后需解引用，用 find() 单次查找
-void AXOB::tradeLimit(Side side, int32_t qty, uint64_t applSeqNum) {
+void AXOB::tradeLimit(Side side, int64_t qty, uint64_t applSeqNum) {
     auto it = orderMap.find(applSeqNum);
     if (UNLIKELY(it == orderMap.end())) {
-        fprintf(stderr, "%06d traded order not found\n", SecurityID);
+        // 上交所 UA5803 规范: 连续竞价阶段主动成交的委托不发新增记录
+        // (先发成交, 再发剩余新增; 全部成交则不再发送), 其订单号天然不在簿中,
+        // 该侧从未挂起, 直接跳过削减。深交所查不到属真实异常。
+        // 计数替代逐笔告警打印: 热路径不做 IO, 异常量由监控采集。
+        health.orderNotFound++;
         return;
     }
-    levelDequeue(side, it->second->price, qty, applSeqNum);
+    ObOrder* o = it->second;
+    // 订单剩余量递减: qty==0 = 全成交, 供 orderMap 懒清理判定;
+    // 乱序回链安全由 60 秒窗口覆盖。
+    o->qty -= qty;
+    levelDequeue(side, o->price, qty, applSeqNum);
 }
 
-void AXOB::levelDequeue(Side side, int32_t price, int32_t qty, [[maybe_unused]] uint64_t applSeqNum) {
+void AXOB::levelDequeue(Side side, int64_t price, int64_t qty, [[maybe_unused]] uint64_t applSeqNum) {
     if (side == Side::BID) {
         auto* node = bidLevelBook.find(price);
         if (!node) return;
         node->qty -= qty;
         if (price == bidMaxPrice) bidMaxQty -= qty;
+        // [兜底模式] 快照重建后的簿与订单量脱节, 削减可越界 → 负量档直接清除
 
         if (bidCageUpperExMinQty == 0 || price < bidCageUpperExMinPrice) {
             BidWeightSize  -= qty;
-            BidWeightValue -= (int64_t)price * qty;
+            BidWeightValue -= (__int128)price * qty;
         } else if (price == bidCageUpperExMinPrice) {
             bidCageUpperExMinQty -= qty;
             if (bidCageUpperExMinQty == 0) {
-                for (int i = 0; i < bidLevelBook.count; i++) {
-                    if (bidLevelBook.levels[i].price > bidCageUpperExMinPrice) {
-                        bidCageUpperExMinPrice = bidLevelBook.levels[i].price;
-                        bidCageUpperExMinQty   = bidLevelBook.levels[i].qty;
-                        break;
+                // 升序找第一个更高的档 (模式无关)
+                bidLevelBook.for_each([&](const LevelNode& l) {
+                    if (l.price > bidCageUpperExMinPrice && bidCageUpperExMinQty == 0) {
+                        bidCageUpperExMinPrice = l.price;
+                        bidCageUpperExMinQty   = l.qty;
                     }
-                }
+                });
             }
         }
 
-        if (node->qty == 0) {
+        if (node->qty < 0) health.negLevelClear++;   // 削减越界保护
+        if (node->qty <= 0) {
             bidLevelBook.erase(price);
             if (price == bidMaxPrice) {
                 bidMaxQty = 0;
-                // [v2.2优化] O(1) 直接取最优价：升序数组末尾 = 最大买价
-                // erase 已移除原最优价，levels[count-1] 必然 < 原 price
-                if (bidLevelBook.count > 0) {
-                    bidMaxPrice = bidLevelBook.levels[bidLevelBook.count - 1].price;
-                    bidMaxQty   = bidLevelBook.levels[bidLevelBook.count - 1].qty;
+                // erase 已移除原最优价, 取次优 (模式无关: map 模式下 levels[] 为陈旧数据)
+                const LevelNode* b = bidLevelBook.bestBid();
+                if (b != nullptr) {
+                    bidMaxPrice = b->price;
+                    bidMaxQty   = b->qty;
                 }
                 if (bidMaxQty != 0)      askCageRefPx = bidMaxPrice;
                 else if (askMinQty != 0) askCageRefPx = askMinPrice;
@@ -191,34 +246,34 @@ void AXOB::levelDequeue(Side side, int32_t price, int32_t qty, [[maybe_unused]] 
         if (askCageLowerExMaxQty == 0 || price > askCageLowerExMaxPrice) {
             if (tradingPhase == TPM::OpenCall && price > mktInfo.PrevClosePx * 10) {
                 AskWeightSizeEx  -= qty;
-                AskWeightValueEx -= (int64_t)price * qty;
+                AskWeightValueEx -= (__int128)price * qty;
             } else {
                 AskWeightSize  -= qty;
-                AskWeightValue -= (int64_t)price * qty;
+                AskWeightValue -= (__int128)price * qty;
             }
         } else if (price == askCageLowerExMaxPrice) {
             askCageLowerExMaxQty -= qty;
             if (askCageLowerExMaxQty == 0) {
-                // CompactLevelBook 升序，反向找更低价格
-                for (int i = askLevelBook.count - 1; i >= 0; i--) {
-                    if (askLevelBook.levels[i].price < askCageLowerExMaxPrice) {
-                        askCageLowerExMaxPrice = askLevelBook.levels[i].price;
-                        askCageLowerExMaxQty   = askLevelBook.levels[i].qty;
-                        break;
+                // 降序找第一个更低的档 (模式无关)
+                askLevelBook.rfor_each([&](const LevelNode& l) {
+                    if (l.price < askCageLowerExMaxPrice && askCageLowerExMaxQty == 0) {
+                        askCageLowerExMaxPrice = l.price;
+                        askCageLowerExMaxQty   = l.qty;
                     }
-                }
+                });
             }
         }
 
-        if (node->qty == 0) {
+        if (node->qty < 0) health.negLevelClear++;
+        if (node->qty <= 0) {
             askLevelBook.erase(price);
             if (price == askMinPrice) {
                 askMinQty = 0;
-                // [v2.2优化] O(1) 直接取最优价：升序数组开头 = 最小卖价
-                // erase 已移除原最优价，levels[0] 必然 > 原 price
-                if (askLevelBook.count > 0) {
-                    askMinPrice = askLevelBook.levels[0].price;
-                    askMinQty   = askLevelBook.levels[0].qty;
+                // erase 已移除原最优价, 取次优 (模式无关: map 模式下 levels[] 为陈旧数据)
+                const LevelNode* a = askLevelBook.bestAsk();
+                if (a != nullptr) {
+                    askMinPrice = a->price;
+                    askMinQty   = a->qty;
                 }
                 if (askMinQty != 0)      bidCageRefPx = askMinPrice;
                 else if (bidMaxQty != 0) bidCageRefPx = bidMaxPrice;

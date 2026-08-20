@@ -12,11 +12,11 @@
 // =====================================================================
 
 struct PriceLevel {
-    int64_t Price = 0;   // 快照精度（深圳6位小数）
+    int32_t Price = 0;   // 快照精度 ×10^4（与 py 引擎及 AX-SBE 历史文件一致）
     int64_t Qty   = 0;
 
     PriceLevel() = default;
-    PriceLevel(int64_t p, int64_t q) : Price(p), Qty(q) {}
+    PriceLevel(int32_t p, int64_t q) : Price(p), Qty(q) {}
 
     bool operator==(const PriceLevel& o) const {
         return Price == o.Price && Qty == o.Qty;
@@ -32,17 +32,17 @@ struct AxsbeSnapStock : public AxsbeMessageBase<AxsbeSnapStock> {
     int64_t  NumTrades       = 0;
     int64_t  TotalVolumeTrade= 0;
     int64_t  TotalValueTrade = 0;
-    int64_t  PrevClosePx     = 0;
-    int64_t  LastPx          = 0;
-    int64_t  OpenPx          = 0;
-    int64_t  HighPx          = 0;
-    int64_t  LowPx           = 0;
-    int64_t  BidWeightPx     = 0;
+    int32_t  PrevClosePx     = 0;
+    int32_t  LastPx          = 0;
+    int32_t  OpenPx          = 0;
+    int32_t  HighPx          = 0;
+    int32_t  LowPx           = 0;
+    int32_t  BidWeightPx     = 0;
     int64_t  BidWeightSize   = 0;
-    int64_t  AskWeightPx     = 0;
+    int32_t  AskWeightPx     = 0;
     int64_t  AskWeightSize   = 0;
-    int64_t  UpLimitPx       = 0;
-    int64_t  DnLimitPx       = 0;
+    int32_t  UpLimitPx       = 0;
+    int32_t  DnLimitPx       = 0;
     PriceLevel bid[10];
     PriceLevel ask[10];
     uint64_t TransactTime    = 0;
@@ -205,31 +205,27 @@ struct AxsbeSnapStock : public AxsbeMessageBase<AxsbeSnapStock> {
     }
 
     // ---- 从 TradingPhaseCode 解析市场交易阶段 ----
+    // 深沪共用同一编码表 (由 SQL 数据源按时间推导, 与交易所原生编码无关)
     TPM tradingPhaseMarket() const {
-        if (secSrc == SecurityIDSource_SZSE) {
-            int code0 = TradingPhaseCode & 0x0F;
-            switch (code0) {
-                case 0: return TPM::Starting;
-                case 1: return TPM::OpenCall;
-                case 2: return (HHMMSSms() < 120000000) ? TPM::AMTrading : TPM::PMTrading;
-                case 3: return (HHMMSSms() < 93100000)  ? TPM::PreTradingBreaking : TPM::Breaking;
-                case 4: return TPM::CloseCall;
-                case 5: return TPM::Ending;
-                case 6: return TPM::HangingUp;
-                case 7: return TPM::AfterCloseTrading;
-                case 8: return TPM::VolatilityBreaking;
-                default: return TPM::Unknown;
-            }
+        int code0 = TradingPhaseCode & 0x0F;
+        switch (code0) {
+            case 0: return TPM::Starting;
+            case 1: return TPM::OpenCall;
+            case 2: return (HHMMSSms() < 120000000) ? TPM::AMTrading : TPM::PMTrading;
+            case 3: return (HHMMSSms() < 93100000)  ? TPM::PreTradingBreaking : TPM::Breaking;
+            case 4: return TPM::CloseCall;
+            case 5: return TPM::Ending;
+            case 6: return TPM::HangingUp;
+            case 7: return TPM::AfterCloseTrading;
+            case 8: return TPM::VolatilityBreaking;
+            default: return TPM::Unknown;
         }
-        return TPM::Unknown;
     }
 
     TPI tradingPhaseSecurity() const {
-        if (secSrc == SecurityIDSource_SZSE) {
-            int code1 = TradingPhaseCode >> 4;
-            if (code1 == 0) return TPI::Normal;
-            if (code1 == 1) return TPI::NoTrade;
-        }
+        int code1 = TradingPhaseCode >> 4;
+        if (code1 == 0) return TPI::Normal;
+        if (code1 == 1) return TPI::NoTrade;
         return TPI::Unknown;
     }
 
@@ -257,10 +253,9 @@ struct AxsbeSnapStock : public AxsbeMessageBase<AxsbeSnapStock> {
         TradingPhaseCode = (code1 << 4) | code0;
     }
 
+    // 时间口径统一: 深沪均使用 YYYYMMDDHHMMSSsss (北京时间) 十进制整数
     uint64_t HHMMSSms() const {
-        if (secSrc == SecurityIDSource_SZSE)
-            return TransactTime % 1000000000ULL;
-        return TransactTime;
+        return TransactTime % 1000000000ULL;
     }
 
     // ---- 比较两个快照是否相同（验证用）----

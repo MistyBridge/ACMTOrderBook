@@ -40,3 +40,28 @@ data/20220426/*.log
 *.tmp
 *.bak
 third_party/
+
+# ---- 推送黑名单 (公司代码/大文件/调试产物) ----
+# 公司订单簿组件 (.cpp0): 只读参照, 不进仓库
+.cpp0/
+# 上游 AXOrderBook 派生副本 (含 hw 硬件代码, 非本项目产物)
+AXOrderBook-PxPrecision4/
+# 内部文档 (审计报告/环境说明等)
+doc/
+# 数据与日志
+data/
+log/
+py_test_output.txt
+*.bak
+# 调试修复脚本 (本地维护)
+cpp_linux/fix_*.py
+# IDE/本地状态
+.claude/
+.codegraph/
+# 公司对照审计脚本 (引用公司二进制路径, 不进仓库)
+cpp_linux/audit_*.sh
+cpp_linux/run_one_company.sh
+# 公司对照审计工具/服务器维护脚本 (不进仓库)
+cpp_linux/cleanup_debug.py
+py/tool/diff_audit.py
+py/tool/summarize_audit.py

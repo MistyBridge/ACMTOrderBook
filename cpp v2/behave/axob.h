@@ -72,17 +72,19 @@ public:
     // 这些字段在每条消息处理中都会被读写
 
     // ==================== 最优档缓存（最高频读写）====================
-    int32_t bidMaxPrice = 0, bidMaxQty = 0;
-    int32_t askMinPrice = 0, askMinQty = 0;
+    int64_t bidMaxPrice = 0;   // 内部 ×10^5
+    int64_t askMinPrice = 0;
+    int64_t bidMaxQty = 0;
+    int64_t askMinQty = 0;
 
     // ==================== 市场统计（每笔成交都会更新）====================
     int64_t NumTrades         = 0;
     int64_t TotalVolumeTrade  = 0;
     int64_t TotalValueTrade   = 0;
-    int32_t LastPx            = 0;
-    int32_t HighPx            = 0;
-    int32_t LowPx             = 0;
-    int32_t OpenPx            = 0;
+    int64_t LastPx            = 0;   // 内部 ×10^5
+    int64_t HighPx            = 0;
+    int64_t LowPx             = 0;
+    int64_t OpenPx            = 0;
 
     // ==================== 核心数据结构 ====================
     // [v2.2优化] orderMap 使用平铺哈希表，提升查找/插入/删除性能
@@ -103,12 +105,15 @@ public:
 #endif
 
     // ==================== 加权统计 ====================
-    int64_t BidWeightSize    = 0;
-    int64_t BidWeightValue   = 0;
-    int64_t AskWeightSize    = 0;
-    int64_t AskWeightValue   = 0;
-    int64_t AskWeightSizeEx  = 0;
-    int64_t AskWeightValueEx = 0;
+    // *Value 为全簿 Σ(price × qty) 累计和: 统一定点 ×10^5 下单档乘积即可达 1e21,
+    // 全簿求和更大, 必须 __int128 (实测 000001 买侧 1e8 股 × 10.54 元 = 1.05e19 已越 int64)。
+    // *Size 为纯数量累计, int64 足够。
+    int64_t  BidWeightSize    = 0;
+    __int128 BidWeightValue   = 0;
+    int64_t  AskWeightSize    = 0;
+    __int128 AskWeightValue   = 0;
+    int64_t  AskWeightSizeEx  = 0;
+    __int128 AskWeightValueEx = 0;
 
     // ==================== 缓存单 ====================
     // [v2优化] 从 unique_ptr 改为栈上对象，省掉堆分配（ObOrder 仅 32B）
@@ -117,6 +122,7 @@ public:
 
     // ==================== 时戳 ====================
     uint64_t currentIncTick = 0;
+    uint64_t lastIncTransactTime = 0;  // 最后逐笔原始时间戳 (YYYYMMDDHHMMSSsss, 快照兜底滞后检测用)
     static constexpr uint64_t SZSE_TICK_CUT     = 1000000000ULL;
     static constexpr int      SZSE_TICK_MS_TAIL  = 10;
     static constexpr int      TIMESTAMP_BIT_SIZE = 28;  // 上交所精度1ms，最大28b
@@ -135,19 +141,57 @@ public:
     // ==================== 价格笼子 ====================
     CageType cageType = CageType::NONE;
     CageSide cageSide = CageSide::NONE;
-    int32_t bidCageUpperExMinPrice = 0;
-    int32_t bidCageUpperExMinQty   = 0;
-    int32_t askCageLowerExMaxPrice = 0;
-    int32_t askCageLowerExMaxQty   = 0;
-    int32_t bidCageRefPx           = 0;
-    int32_t askCageRefPx           = 0;
+    int64_t bidCageUpperExMinPrice = 0;
+    int64_t bidCageUpperExMinQty   = 0;
+    int64_t askCageLowerExMaxPrice = 0;
+    int64_t askCageLowerExMaxQty   = 0;
+    int64_t bidCageRefPx           = 0;
+    int64_t askCageRefPx           = 0;
     bool    bidWaitingForCage      = false;
     bool    askWaitingForCage      = false;
+    bool    cageSessionActive      = false;   // 连续竞价笼子是否已激活 (开盘后一次)
 
     // [v2优化] 冷字段放在末尾，不挤占热字段的 cache line
 
     // ==================== 导出开关（FPGA验证用）====================
     bool exportLevelAccess = false;
+
+    // ==================== 快照兜底 (生产安全网, 双套+路由) ====================
+    // 套A = 逐笔重建簿 (本引擎增量维护, 永不被快照覆盖);
+    // 套B = 市场快照镜像 (最近一帧原样保留);
+    // 输出按路由状态机切换: 默认 REBUILT; 触发条件进入 SNAPSHOT;
+    // 套A 与套B 重新对齐 (十档全等+num_trades 窗口) 后自愈切回 REBUILT。
+    // 触发: ①竞价时段 (9:25-9:30 / 14:57-15:00, 交易所此段为特殊展示口径)
+    //       ②快照时间戳超过最后逐笔时间戳 (逐笔流断流/滞后, 正常时快照早 ~1s 不触发)
+    //       ③连续竞价交叉簿异常
+    enum class SnapRoute : uint8_t { REBUILT = 0, SNAPSHOT = 1 };
+    bool snapFallbackEnabled = false;   // 校验闭环默认关闭 (审计口径), 生产打开
+    SnapRoute snapRoute = SnapRoute::REBUILT;
+    AxsbeSnapStock receivedSnapshot;     // 套B: 市场快照镜像
+    bool hasReceivedSnapshot = false;
+    void initMktInfoFromSnap(const AxsbeSnapStock& snap);
+    void evalSnapRoute(const AxsbeSnapStock& snap);
+    AxsbeSnapStock currentBook(int showLevelNb);  // 路由感知输出 (回放校验/生产查询共用)
+
+    // ==================== 生产健壮性 ====================
+    // orderMap 懒清理: 订单剩余量减至 0 (全成交) 且时间戳早于安全窗口后删除,
+    // 按 "流内排序保证 + 60 秒安全窗口" 延迟删除, 控制长跑内存增长。
+    bool orderMapCleanupEnabled = false;   // 回放默认关闭 (审计口径), 生产打开
+    size_t cleanupCursor = 0;
+    void cleanupOrderMap(uint64_t nowTransactTime);
+
+    // 跨日脏数据过滤: 过滤前一交易日残留消息
+    bool staleDataFilterEnabled = false;
+    int64_t dayOfData = -1;               // 当前数据日 YYYYMMDD (首条消息设定)
+    uint64_t staleFiltered = 0;           // 过滤计数
+
+    // 健康计数: 可恢复错误路径不中断处理, 改为累计供监控采集
+    struct HealthStat {
+        uint64_t orderNotFound = 0;   // 成交/撤单回链失败的订单号
+        uint64_t negLevelClear = 0;   // 负量档清除 (兜底模式削减越界保护)
+        uint64_t snapRouteAdopt = 0;  // 快照兜底切换次数
+        uint64_t cleanupErased  = 0;  // orderMap 清理删除的订单数
+    } health;
 
     // ==================== 调试/测试 ====================
     int msgNb = 0;
@@ -171,6 +215,8 @@ public:
     void onMsg(const AxsbeOrder& msg);
     void onMsg(const AxsbeExe&   msg);
     void onMsg(const AxsbeSnapStock& msg);
+    // 跨日脏数据检测 (生产过滤, 回放关闭)
+    bool isStaleData(uint64_t transactTime);
     void onMsg(AXSignal signal);
 
     // ==================== 委托处理（axob_order.cpp）====================
@@ -182,12 +228,14 @@ public:
     void onExec(const AxsbeExe& rawExec);
     void onTrade(const ObExec& exec);
     void onCancel(const ObCancel& cancel);
-    void tradeLimit(Side side, int32_t qty, uint64_t applSeqNum);
-    void levelDequeue(Side side, int32_t price, int32_t qty, uint64_t applSeqNum);
+    void tradeLimit(Side side, int64_t qty, uint64_t applSeqNum);
+    void levelDequeue(Side side, int64_t price, int64_t qty, uint64_t applSeqNum);
 
     // ==================== 价格笼子（axob_cage.cpp）====================
     void openCage();
     void enterCage();
+    // 进入连续竞价时, 把集合竞价期间挂在簿内、超出有效竞价范围(±2%)的存量订单隐藏
+    void activateCage();
 
     // ==================== 快照（axob_snap.cpp）====================
     void onSnap(const AxsbeSnapStock& snap);
@@ -202,7 +250,7 @@ public:
     void setSnapFixParam(AxsbeSnapStock& snap);
     void setSnapTimestamp(AxsbeSnapStock& snap);
     void clipSnap(AxsbeSnapStock& snap);
-    std::pair<std::map<int32_t,LevelNode>, std::map<int32_t,LevelNode>>
+    std::pair<std::map<int64_t,LevelNode>, std::map<int64_t,LevelNode>>
         getLevels(int levelNb);
 
     // [v2优化] orderMap 接口封装 — 保持外部接口兼容
@@ -250,8 +298,8 @@ public:
 // =====================================================================
 static_assert(std::is_trivially_copyable_v<LevelNode>,
               "LevelNode must be trivially copyable");
-static_assert(sizeof(LevelNode) == 8,
-              "LevelNode should be exactly 8B (two int32)");
+static_assert(sizeof(LevelNode) == 16,
+              "LevelNode should be exactly 16B (int32 price + int64 qty)");
 #if USE_MEMORY_POOL
 static_assert(sizeof(ObOrder) >= sizeof(void*),
               "ObOrder must be >= sizeof(void*) for MemoryPool intrusive free list");

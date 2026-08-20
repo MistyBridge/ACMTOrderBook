@@ -9,9 +9,10 @@
 void AXOB::onMsg(const AxsbeOrder& msg) {
     // [v2优化] securityID 不匹配是罕见情况（文件只含单个股票时不会发生）
     if (UNLIKELY(msg.securityID != SecurityID)) return;
+    if (UNLIKELY(isStaleData(msg.TransactTime))) return;
 
     // CYB 进入收盘集合竞价，敞开价格笼子
-    if (mktSubType == MarketSubType::SZSE_STK_GEM &&
+    if (cageType == CageType::CYB &&
         tradingPhase == TPM::PMTrading &&
         msg.tradingPhaseMarket() == TPM::CloseCall) {
         openCage();
@@ -22,6 +23,25 @@ void AXOB::onMsg(const AxsbeOrder& msg) {
     // [v2优化] 波动性中断期间不更新交易阶段（罕见路径）
     if (LIKELY(tradingPhase != TPM::VolatilityBreaking)) {
         tradingPhase = msg.tradingPhaseMarket();
+    }
+
+    // 进入连续竞价时激活价格笼子 (隐藏集合竞价存量笼子外订单)
+    if (UNLIKELY(cageType == CageType::CYB && !cageSessionActive && tradingPhase == TPM::AMTrading)) {
+        activateCage();
+        cageSessionActive = true;
+    }
+
+    // 上交所: 撤单在逐笔委托流中 ('D' 记录, OrderNo 回链原订单)
+    if (msg.secSrc == SecurityIDSource_SSE && msg.OrdType == 'D') {
+        ObCancel c;
+        c.applSeqNum   = msg.OrderNo;
+        c.qty          = qtySnap2Inter(msg.OrderQty, msg.secSrc);
+        c.price        = msg.Price * SSE_PRICE_MUL;   // 原始 ×10^3 → 内部 ×10^5
+        c.side         = msg.isBuy() ? Side::BID : Side::ASK;
+        c.TransactTime = msg.TransactTime;
+        onCancel(c);
+        msgNb++;
+        return;
     }
 
     onOrder(msg);
@@ -58,6 +78,13 @@ void AXOB::onOrder(const AxsbeOrder& rawOrder) {
 // ---- 限价单处理 ----
 // [v2优化] holdingOrder 从 unique_ptr 改为栈对象，holdingNb 改为 hasHoldingOrder_
 void AXOB::onLimitOrder(ObOrder& order) {
+    // 深市市价单 (price=0/超涨跌停价): 按"对手方最优价格申报"成交, 不进入簿。
+    // 由 holdingOrder_ 路径承接: 首个成交消息回链 (Bid/OfferApplSeqNum 命中)
+    // 时削减对手方档位; 残余自动撤销。参照实现同此语义 (不 updatePriceMap,
+    // 簿削减由成交消息回链完成)。
+    // [史] 曾加"直接丢弃"guard 消除 0 价幽灵档, 但破坏连续竞价簿削减
+    // (000001 65 帧全等失败); 根因是流序 (UNION ALL 分支内排序) 使成交
+    // 迟到, 市价单永不回链而滞留在簿 — 全局排序修复后 guard 不再需要。
     if (tradingPhase == TPM::OpenCall || tradingPhase == TPM::CloseCall) {
         // 集合竞价期间：直接插入
         if (tradingPhase == TPM::CloseCall && hasHoldingOrder_) {
@@ -90,8 +117,18 @@ void AXOB::onLimitOrder(ObOrder& order) {
             useTimestamp(order.TransactTime);
         }
 
+        // 上交所: 'A' 记录必为挂单 (未成交单或已成交单的剩余), 直接入簿。
+        // UA5803 规范: 可成交委托先发成交、再发剩余新增 (或不发), 不存在
+        // "可成交的 'A' 记录", 因此深交所的持仓等待逻辑不适用于上交所。
+        // 上交所无价格笼子规则, 不做笼子判断。
+        if (secSrc == SecurityIDSource_SSE && order.type == OrdType::LIMIT) {
+            insertOrder(order);
+            genSnap();
+            return;
+        }
+
         // CYB 价格笼子判断（仅创业板）
-        if (mktSubType == MarketSubType::SZSE_STK_GEM && order.type == OrdType::LIMIT &&
+        if (cageType == CageType::CYB && order.type == OrdType::LIMIT &&
             ((order.side == Side::BID && order.price > cybCageUpper(bidCageRefPx)) ||
              (order.side == Side::ASK && order.price < cybCageLower(askCageRefPx)))) {
             insertOrder(order, true);
@@ -115,7 +152,7 @@ void AXOB::onLimitOrder(ObOrder& order) {
             } else {
                 // 不可成交限价单：直接插入订单簿
                 insertOrder(order);
-                if (mktSubType == MarketSubType::SZSE_STK_GEM) {
+                if (cageType == CageType::CYB) {
                     enterCage();
                 }
                 genSnap();
@@ -144,7 +181,7 @@ void AXOB::insertOrder(const ObOrder& order, bool outOfCage) {
                     bidMaxPrice = order.price;
                     bidMaxQty   = order.qty;
                     askCageRefPx = order.price;
-                    askWaitingForCage = (mktSubType == MarketSubType::SZSE_STK_GEM);
+                    askWaitingForCage = (cageType == CageType::CYB);
                 }
             } else {
                 if (order.price > bidCageRefPx &&
@@ -156,7 +193,7 @@ void AXOB::insertOrder(const ObOrder& order, bool outOfCage) {
         }
         if (!outOfCage) {
             BidWeightSize  += order.qty;
-            BidWeightValue += static_cast<int64_t>(order.price) * order.qty;
+            BidWeightValue += (__int128)order.price * order.qty;
         }
     } else if (order.side == Side::ASK) {
         auto* node = askLevelBook.find(order.price);
@@ -173,7 +210,7 @@ void AXOB::insertOrder(const ObOrder& order, bool outOfCage) {
                     askMinPrice = order.price;
                     askMinQty   = order.qty;
                     bidCageRefPx = order.price;
-                    bidWaitingForCage = (mktSubType == MarketSubType::SZSE_STK_GEM);
+                    bidWaitingForCage = (cageType == CageType::CYB);
                 }
             } else {
                 if (order.price < askCageRefPx &&
@@ -187,10 +224,10 @@ void AXOB::insertOrder(const ObOrder& order, bool outOfCage) {
             // 开盘集合竞价期间，超过昨收N倍的委托不参与统计
             if (tradingPhase == TPM::OpenCall && order.price > mktInfo.PrevClosePx * CYB_ORDER_ENVALUE_MAX_RATE) {
                 AskWeightSizeEx  += order.qty;
-                AskWeightValueEx += static_cast<int64_t>(order.price) * order.qty;
+                AskWeightValueEx += (__int128)order.price * order.qty;
             } else {
                 AskWeightSize  += order.qty;
-                AskWeightValue += static_cast<int64_t>(order.price) * order.qty;
+                AskWeightValue += (__int128)order.price * order.qty;
             }
         }
     }

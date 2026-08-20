@@ -158,6 +158,58 @@ set(SOURCES
 # 创建可执行文件
 add_executable(orderbook_v2 ${SOURCES})
 
+# =====================================================================
+#  kline_sec — 秒级K线合成 + 快照校验工具
+# =====================================================================
+add_executable(kline_sec
+    kline_sec.cpp
+    tool/msg_util.cpp
+    behave/axob_init.cpp
+    behave/axob_order.cpp
+    behave/axob_trade.cpp
+    behave/axob_cage.cpp
+    behave/axob_snap.cpp
+)
+target_compile_definitions(kline_sec PRIVATE
+    USE_FLAT_HASHMAP=${USE_FLAT_HASHMAP}
+    _CRT_SECURE_NO_WARNINGS
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+)
+target_compile_options(kline_sec PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/utf-8 /O2 /arch:AVX2 /GL>
+)
+if(MSVC)
+    target_link_options(kline_sec PRIVATE /LTCG)
+endif()
+
+# =====================================================================
+#  ch_replay — ClickHouse 直连的订单簿回放+校验工具 (无本地文件)
+# =====================================================================
+add_executable(ch_replay
+    ch_replay.cpp
+    source/ch_client.cpp
+    source/clickhouse_source.cpp
+    tool/msg_util.cpp
+    behave/axob_init.cpp
+    behave/axob_order.cpp
+    behave/axob_trade.cpp
+    behave/axob_cage.cpp
+    behave/axob_snap.cpp
+)
+target_compile_definitions(ch_replay PRIVATE
+    USE_FLAT_HASHMAP=${USE_FLAT_HASHMAP}
+    _CRT_SECURE_NO_WARNINGS
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+)
+target_compile_options(ch_replay PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/utf-8 /O2 /arch:AVX2 /GL>
+)
+if(MSVC)
+    target_link_options(ch_replay PRIVATE /LTCG)
+endif()
+
 # -----------------------------------------------------------------
 #  MSVC 运行时库：/MD（动态链接 MSVCRT.DLL）
 #

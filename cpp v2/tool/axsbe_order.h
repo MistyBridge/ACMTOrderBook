@@ -21,6 +21,8 @@ struct AxsbeOrder : public AxsbeMessageBase<AxsbeOrder> {
     uint8_t  Side       = 0;     // '1'=买入, '2'=卖出
     uint8_t  OrdType    = 0;     // '1'=市价, '2'=限价, 'U'=本方最优
     uint64_t TransactTime = 0;
+    uint64_t OrderNo    = 0;     // 上交所: 订单号 (撤单回链/成交回链)
+    uint64_t BizIndex   = 0;     // 上交所: 业务序号 (委托/成交统一排序)
 
     // ---- 从 Key=Value 字典加载 ----
     void loadDict(const std::unordered_map<std::string, int64_t>& dict) {
@@ -77,8 +79,9 @@ struct AxsbeOrder : public AxsbeMessageBase<AxsbeOrder> {
     }
 
     // ---- 辅助方法 ----
-    bool isBuy()  const { return Side == '1'; }
-    bool isSell() const { return Side == '2'; }
+    // 方向: 深交所 '1'/'2', 上交所 'B'/'S'
+    bool isBuy()  const { return Side == '1' || Side == 'B'; }
+    bool isSell() const { return Side == '2' || Side == 'S'; }
 
     bool isMarket()      const { return OrdType == '1'; }
     bool isLimit()       const { return OrdType == '2' || OrdType == 'A'; }  // '2'=SZ限价, 'A'=SH新增(限价)
@@ -98,10 +101,9 @@ struct AxsbeOrder : public AxsbeMessageBase<AxsbeOrder> {
     }
 
     // 日内时戳（精度ms）
+    // 时间口径统一: 深沪均使用 YYYYMMDDHHMMSSsss (北京时间) 十进制整数
     uint64_t HHMMSSms() const {
-        if (secSrc == SecurityIDSource_SZSE)
-            return TransactTime % 1000000000ULL;
-        return TransactTime;
+        return TransactTime % 1000000000ULL;
     }
 
     std::string toString() const {

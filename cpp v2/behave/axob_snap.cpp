@@ -1,16 +1,34 @@
 #include "axob.h"
 #include <cstdio>
 #include <cmath>
+#include <cstdlib>   // std::llabs (内部 ×10^5 定点差值需 64 位绝对值)
 #include <map>
 
-static int32_t fmtPx(int32_t price, InstrumentType instType, SecurityIDSource src) {
+static int32_t fmtPx(int64_t price, InstrumentType instType, SecurityIDSource src) {
     return fmtPriceInter2Snap(price, instType, src);
+}
+
+// 快照原始精度 → 内部 ×10^5 (乘法; 统一定点后与品种无关)
+static inline int64_t snapPxToInter(int64_t rawPx, SecurityIDSource src) {
+    if (src == SecurityIDSource_SZSE) return rawPx * SZSE_PRICE_MUL;
+    if (src == SecurityIDSource_SSE)  return rawPx * SSE_PRICE_MUL;
+    return rawPx;
 }
 
 // 消息入口
 void AXOB::onMsg(const AxsbeSnapStock& msg) {
     if (msg.securityID != SecurityID) return;
+    if (UNLIKELY(isStaleData(msg.TransactTime))) return;
     ensureSnap();  // [v2.7] 验证前确保快照最新
+    // 套B: 市场快照镜像 (最近一帧原样保留, 秒级更新, 零维护成本)
+    if (snapFallbackEnabled) {
+        receivedSnapshot = msg;
+        hasReceivedSnapshot = true;
+        evalSnapRoute(msg);
+        onSnap(msg);   // 常量初始化/收盘价补充/波动性中断仍照常 (不触碰簿)
+        msgNb++;
+        return;
+    }
     onSnap(msg);
     msgNb++;
 }
@@ -64,44 +82,109 @@ void AXOB::onMsg(AXSignal signal) {
     }
 }
 
+// 快照常量初始化 (首帧快照; 兜底重置时同样调用)
+void AXOB::initMktInfoFromSnap(const AxsbeSnapStock& snap) {
+    if (mktInfo.ChannelNo != 0) return;
+    mktInfo.ChannelNo    = snap.ChannelNo;
+    mktInfo.UpLimitPx    = snap.UpLimitPx;
+    mktInfo.DnLimitPx    = snap.DnLimitPx;
+
+    // 统一定点 ×10^5: 品种 (股票/基金/可转债) 不再分叉, 仅交易所原始精度不同。
+    // 涨跌停内部价保留原始精度域的 *Px 供快照回吐, *Price 供簿内比较。
+    mktInfo.PrevClosePx  = snapPxToInter(snap.PrevClosePx, secSrc);
+    bidCageRefPx = mktInfo.PrevClosePx;
+    askCageRefPx = mktInfo.PrevClosePx;
+
+    mktInfo.UpLimitPrice = snapPxToInter(snap.UpLimitPx, secSrc);
+    mktInfo.DnLimitPrice = snapPxToInter(snap.DnLimitPx, secSrc);
+    mktInfo.YYMMDD       = snap.TransactTime / SZSE_TICK_CUT;
+}
+
+// HHMMSSsss (十进制编码) → 当日内毫秒 (真实时间差比较用; 编码差跨秒边界会失真)
+static inline int64_t hmsmsToDayMs(uint64_t t) {
+    uint64_t hmsms = t % 1000000000ULL;   // HHMMSSsss
+    uint64_t sss = hmsms % 1000;
+    uint64_t hms = hmsms / 1000;          // HHMMSS
+    uint64_t ss = hms % 100; hms /= 100;
+    uint64_t mi = hms % 100; hms /= 100;
+    uint64_t hh = hms;
+    return (int64_t)((hh * 3600 + mi * 60 + ss) * 1000 + sss);
+}
+
+// 快照兜底路由 (双套+路由): 套A=重建簿(永不被覆盖), 套B=快照镜像, 输出按条件切换
+void AXOB::evalSnapRoute(const AxsbeSnapStock& snap) {
+    auto ph = snap.tradingPhaseMarket();
+
+    if (snapRoute == SnapRoute::REBUILT) {
+        // 进入快照模式:
+        // ① 竞价时段强制 (开盘撮合后至连续竞价前 / 收盘竞价): 簿由快照接管
+        if (ph == TPM::PreTradingBreaking || ph == TPM::CloseCall) {
+            snapRoute = SnapRoute::SNAPSHOT;
+            health.snapRouteAdopt++;
+            fprintf(stderr, "SNAP-ROUTE -> SNAPSHOT (竞价时段) t=%llu\n",
+                    (unsigned long long)snap.TransactTime);
+            return;
+        }
+        // ② 滞后检测 (仅连续竞价时段: 午休/盘后快照仍推, 不能作为断流信号):
+        //    快照时间戳超过最后逐笔时间戳 + 500ms 阈值 → 逐笔流断流/滞后
+        //    (正常时快照流比逐笔流早约 1 秒; 厂商反向抖动 ±1-2 笔 <200ms, 阈值过滤误触)
+        if ((ph == TPM::AMTrading || ph == TPM::PMTrading) &&
+            lastIncTransactTime != 0 &&
+            hmsmsToDayMs(snap.TransactTime) > hmsmsToDayMs(lastIncTransactTime) + 500) {
+            snapRoute = SnapRoute::SNAPSHOT;
+            health.snapRouteAdopt++;
+            fprintf(stderr, "SNAP-ROUTE -> SNAPSHOT (逐笔滞后) t=%llu lastInc=%llu\n",
+                    (unsigned long long)snap.TransactTime,
+                    (unsigned long long)lastIncTransactTime);
+            return;
+        }
+        // ③ 连续竞价交叉簿异常 (竞价阶段买卖交叉是常态, 仅连续竞价判定)
+        if ((ph == TPM::AMTrading || ph == TPM::PMTrading) &&
+            bidMaxQty > 0 && askMinQty > 0 && bidMaxPrice >= askMinPrice) {
+            snapRoute = SnapRoute::SNAPSHOT;
+            health.snapRouteAdopt++;
+            fprintf(stderr, "SNAP-ROUTE -> SNAPSHOT (交叉簿) t=%llu\n",
+                    (unsigned long long)snap.TransactTime);
+            return;
+        }
+    } else {
+        // 自愈检测: 套A 与套B 重新对齐 (num_trades 窗口 + 十档全等) → 切回重建簿
+        // 丢单场景套A 永远追不上快照笔数 → 停留快照模式 (保真但不假装恢复)。
+        if (ph == TPM::PreTradingBreaking || ph == TPM::CloseCall) return;  // 竞价时段不切回
+        AxsbeSnapStock a = genTradingSnap(false, 10);
+        bool statsAligned = a.NumTrades >= snap.NumTrades &&
+                            a.NumTrades <= snap.NumTrades + 2;
+        bool lvlsAligned = true;
+        for (int i = 0; i < 10 && lvlsAligned; i++) {
+            if (!(a.bid[i] == snap.bid[i]) || !(a.ask[i] == snap.ask[i])) lvlsAligned = false;
+        }
+        if (statsAligned && lvlsAligned) {
+            snapRoute = SnapRoute::REBUILT;
+            fprintf(stderr, "SNAP-ROUTE -> REBUILT t=%llu\n",
+                    (unsigned long long)snap.TransactTime);
+        }
+    }
+}
+
+// 路由感知输出: 快照模式返回套B (市场快照镜像), 否则返回套A (重建簿全量)
+AxsbeSnapStock AXOB::currentBook(int showLevelNb) {
+    if (snapFallbackEnabled && snapRoute == SnapRoute::SNAPSHOT && hasReceivedSnapshot) {
+        return receivedSnapshot;   // 套B: 市场快照镜像 (秒级, 值拷贝开销极小)
+    }
+    if (tradingPhase == TPM::OpenCall || tradingPhase == TPM::CloseCall)
+        return genCallSnap(showLevelNb);
+    return genTradingSnap(false, showLevelNb);
+}
+
 // 快照验证
 void AXOB::onSnap(const AxsbeSnapStock& snap) {
     if (snap.tradingPhaseSecurity() != TPI::Normal) return;
 
-    if (mktInfo.ChannelNo == 0) {
-        mktInfo.ChannelNo    = snap.ChannelNo;
-        mktInfo.UpLimitPx    = snap.UpLimitPx;
-        mktInfo.DnLimitPx    = snap.DnLimitPx;
+    initMktInfoFromSnap(snap);
 
-        if (secSrc == SecurityIDSource_SZSE) {
-            if (instType == InstrumentType::STOCK)
-                mktInfo.PrevClosePx = snap.PrevClosePx / (PRICE_SZSE_SNAP_PRECLOSE_PRECISION / PRICE_INTER_STOCK_PRECISION);
-            else if (instType == InstrumentType::FUND)
-                mktInfo.PrevClosePx = snap.PrevClosePx / (PRICE_SZSE_SNAP_PRECLOSE_PRECISION / PRICE_INTER_FUND_PRECISION);
-        }
-        bidCageRefPx = mktInfo.PrevClosePx;
-        askCageRefPx = mktInfo.PrevClosePx;
-
-        if (secSrc == SecurityIDSource_SZSE) {
-            if (instType == InstrumentType::STOCK) {
-                mktInfo.UpLimitPrice = snap.UpLimitPx / (PRICE_SZSE_SNAP_PRECISION / PRICE_INTER_STOCK_PRECISION);
-                mktInfo.DnLimitPrice = snap.DnLimitPx / (PRICE_SZSE_SNAP_PRECISION / PRICE_INTER_STOCK_PRECISION);
-            } else if (instType == InstrumentType::FUND) {
-                mktInfo.UpLimitPrice = snap.UpLimitPx / (PRICE_SZSE_SNAP_PRECISION / PRICE_INTER_FUND_PRECISION);
-                mktInfo.DnLimitPrice = snap.DnLimitPx / (PRICE_SZSE_SNAP_PRECISION / PRICE_INTER_FUND_PRECISION);
-            }
-            mktInfo.YYMMDD = snap.TransactTime / SZSE_TICK_CUT;
-        }
-    }
-
-    // 收盘价补充
+    // 收盘价补充 (官方收盘价来自快照, 换算为内部 ×10^5)
     if (tradingPhase == TPM::Ending && !closePxReady) {
-        if (secSrc == SecurityIDSource_SZSE) {
-            if (instType == InstrumentType::STOCK)
-                LastPx = snap.LastPx / (PRICE_SZSE_SNAP_PRECISION / PRICE_INTER_STOCK_PRECISION);
-            else if (instType == InstrumentType::FUND)
-                LastPx = snap.LastPx / (PRICE_SZSE_SNAP_PRECISION / PRICE_INTER_FUND_PRECISION);
-        }
+        LastPx = snapPxToInter(snap.LastPx, secSrc);
         closePxReady = true;
         genSnap();
     }
@@ -154,8 +237,8 @@ void AXOB::ensureSnap() {
 void AXOB::updateSnapStats() {
     lastSnap.LastPx = fmtPx(LastPx, instType, secSrc);
     lastSnap.NumTrades = NumTrades;
-    lastSnap.TotalVolumeTrade = TotalVolumeTrade;
-    lastSnap.TotalValueTrade = TotalValueTrade;
+    lastSnap.TotalVolumeTrade = qtyInter2Snap(TotalVolumeTrade, secSrc);
+    lastSnap.TotalValueTrade = amtInter2Snap(TotalValueTrade, secSrc);
     int32_t h = fmtPx(HighPx, instType, secSrc);
     int32_t l = fmtPx(LowPx, instType, secSrc);
     if (h > lastSnap.HighPx) lastSnap.HighPx = h;
@@ -164,17 +247,19 @@ void AXOB::updateSnapStats() {
 
 // 集合竞价快照 — 虚拟撮合算法
 AxsbeSnapStock AXOB::genCallSnap(int showLevelNb) {
-    int32_t _bid_p = bidMaxPrice, _bid_q = bidMaxQty;
-    int32_t _ask_p = askMinPrice, _ask_q = askMinQty;
+    int64_t _bid_p = bidMaxPrice;
+    int64_t _bid_q = bidMaxQty;
+    int64_t _ask_p = askMinPrice;
+    int64_t _ask_q = askMinQty;
 
     // 初始撮合价
-    int32_t price = 0;
+    int64_t price = 0;      // 内部 ×10^5
     if (_bid_q == 0 && _ask_q == 0)      price = 0;
     else if (_bid_q == 0)                 price = _ask_p;
     else if (_ask_q == 0)                 price = _bid_p;
 
-    int32_t volumeTrade = 0, bidQty = 0, askQty = 0;
-    int32_t refPx = (NumTrades == 0) ? mktInfo.PrevClosePx : LastPx;
+    int64_t volumeTrade = 0, bidQty = 0, askQty = 0;
+    int64_t refPx = (NumTrades == 0) ? mktInfo.PrevClosePx : LastPx;
 
     // 撮合循环
     while (_bid_q != 0 && _ask_q != 0) {
@@ -194,35 +279,42 @@ AxsbeSnapStock AXOB::genCallSnap(int showLevelNb) {
 
             if (bidQty == 0 && askQty == 0) {
                 if (_bid_p >= refPx && _ask_p <= refPx) price = refPx;
-                else if (abs(_bid_p - refPx) < abs(_ask_p - refPx)) price = _bid_p;
+                // 必须用 std::llabs: 内部 ×10^5 下差值远超 int32,
+                // 无限定的 abs() 可能选中 int 重载而截断高位。
+                else if (std::llabs(_bid_p - refPx) < std::llabs(_ask_p - refPx)) price = _bid_p;
                 else price = _ask_p;
             }
 
             if (bidQty == 0) {
                 if (askQty != 0) price = _ask_p;
                 _bid_q = 0;
-                for (int i = bidLevelBook.count - 1; i >= 0; i--) {
-                    if (bidLevelBook.levels[i].price < _bid_p) { _bid_p = bidLevelBook.levels[i].price; _bid_q = bidLevelBook.levels[i].qty; break; }
-                }
+                // 降序找第一个更低的档 (模式无关)
+                bidLevelBook.rfor_each([&](const LevelNode& l) {
+                    if (l.price < _bid_p && _bid_q == 0) { _bid_p = l.price; _bid_q = l.qty; }
+                });
             }
             if (askQty == 0) {
                 if (bidQty != 0) price = _bid_p;
                 _ask_q = 0;
-                for (int i = 0; i < askLevelBook.count; i++) {
-                    if (askLevelBook.levels[i].price > _ask_p) { _ask_p = askLevelBook.levels[i].price; _ask_q = askLevelBook.levels[i].qty; break; }
-                }
+                // 升序找第一个更高的档 (模式无关)
+                askLevelBook.for_each([&](const LevelNode& l) {
+                    if (l.price > _ask_p && _ask_q == 0) { _ask_p = l.price; _ask_q = l.qty; }
+                });
             }
         } else {
             // 无交叉，修正成交价
+            // 无交叉时向对手价靠一个最小价位 (A股最小价位 = 0.01 元)。
+            // 注意: 原实现写字面量 1 (绑定内部 ×10^2 精度), 统一定点 ×10^5 后
+            // 必须用 TICK_1CENT, 否则只挪 0.00001 元, 虚拟撮合价偏离。
             if (askQty == 0 && bidQty == 0) {
                 if (_ask_q && price >= _ask_p) {
-                    if (_bid_p + 1 < _ask_p) price = _ask_p - 1;
+                    if (_bid_p + TICK_1CENT < _ask_p) price = _ask_p - TICK_1CENT;
                     else {
                         if (_ask_q <= _bid_q) { price = _ask_p; askQty = _ask_q; }
                         else { price = _bid_p; bidQty = _bid_q; }
                     }
                 } else if (_bid_q && price <= _bid_p) {
-                    if (_ask_p > _bid_p + 1) price = _bid_p + 1;
+                    if (_ask_p > _bid_p + TICK_1CENT) price = _bid_p + TICK_1CENT;
                     else {
                         if (_bid_q <= _ask_q) { price = _bid_p; bidQty = _bid_q; }
                         else { price = _ask_p; askQty = _ask_q; }
@@ -243,17 +335,21 @@ AxsbeSnapStock AXOB::genCallSnap(int showLevelNb) {
     if (volumeTrade == 0) {
         for (int i = 0; i < showLevelNb; i++) { snap.bid[i] = PriceLevel(0,0); snap.ask[i] = PriceLevel(0,0); }
     } else {
-        snap.bid[0] = PriceLevel(snapPrice, volumeTrade);
-        snap.ask[0] = PriceLevel(snapPrice, volumeTrade);
-        snap.bid[1] = PriceLevel(0, bidQty);
-        snap.ask[1] = PriceLevel(0, askQty);
+        // 量: 内部 ×10^5 → 快照原始精度
+        snap.bid[0] = PriceLevel(snapPrice, qtyInter2Snap(volumeTrade, secSrc));
+        snap.ask[0] = PriceLevel(snapPrice, qtyInter2Snap(volumeTrade, secSrc));
+        snap.bid[1] = PriceLevel(0, qtyInter2Snap(bidQty, secSrc));
+        snap.ask[1] = PriceLevel(0, qtyInter2Snap(askQty, secSrc));
         for (int i = 2; i < showLevelNb; i++) { snap.bid[i] = PriceLevel(0,0); snap.ask[i] = PriceLevel(0,0); }
     }
 
     snap.NumTrades        = NumTrades;
-    snap.TotalVolumeTrade = TotalVolumeTrade;
-    snap.TotalValueTrade  = TotalValueTrade;
-    snap.LastPx  = fmtPx(LastPx,  instType, secSrc);
+    // 内部 ×10^5 → 快照原始精度 (量: 深 ÷1000 沪 ÷100; 额: 深 ÷10 沪 ÷1)
+    snap.TotalVolumeTrade = qtyInter2Snap(TotalVolumeTrade, secSrc);
+    snap.TotalValueTrade  = amtInter2Snap(TotalValueTrade, secSrc);
+    // 集合竞价快照的 LastPx 为虚拟撮合价 (交易所约定; 无法撮合时为 0)。
+    // 注: 部分历史数据源(如 2022 年厂商数据)竞价期 last 恒为 0, 属数据源差异。
+    snap.LastPx  = (volumeTrade > 0) ? snapPrice : 0;
     snap.HighPx  = fmtPx(HighPx,  instType, secSrc);
     snap.LowPx   = fmtPx(LowPx,   instType, secSrc);
     snap.OpenPx  = fmtPx(OpenPx,  instType, secSrc);
@@ -270,32 +366,37 @@ AxsbeSnapStock AXOB::genTradingSnap(bool isVolBreaking, int levelNb) {
     snap.secSrc = secSrc;
     snap.securityID = SecurityID;
 
-    // 买方档位（从大到小，CompactLevelBook 升序，反向遍历）
+    // 买方档位（从大到小，模式无关遍历）
     int lv = 0;
     if (!isVolBreaking) {
-        for (int i = bidLevelBook.count - 1; i >= 0 && lv < levelNb; i--) {
-            if (bidCageUpperExMinQty == 0 || bidLevelBook.levels[i].price < bidCageUpperExMinPrice) {
-                snap.bid[lv++] = PriceLevel(fmtPx(bidLevelBook.levels[i].price, instType, secSrc), bidLevelBook.levels[i].qty);
+        bidLevelBook.rfor_each([&](const LevelNode& n) {
+            if (lv >= levelNb) return;
+            if (bidCageUpperExMinQty == 0 || n.price < bidCageUpperExMinPrice) {
+                snap.bid[lv++] = PriceLevel(fmtPx(n.price, instType, secSrc),
+                                            qtyInter2Snap(n.qty, secSrc));
             }
-        }
+        });
     }
     for (int i = lv; i < levelNb; i++) snap.bid[i] = PriceLevel(0, 0);
 
-    // 卖方档位（从小到大，CompactLevelBook 升序，正向遍历）
+    // 卖方档位（从小到大，模式无关遍历）
     lv = 0;
     if (!isVolBreaking) {
-        for (int i = 0; i < askLevelBook.count && lv < levelNb; i++) {
-            if (askCageLowerExMaxQty == 0 || askLevelBook.levels[i].price > askCageLowerExMaxPrice) {
-                snap.ask[lv++] = PriceLevel(fmtPx(askLevelBook.levels[i].price, instType, secSrc), askLevelBook.levels[i].qty);
+        askLevelBook.for_each([&](const LevelNode& n) {
+            if (lv >= levelNb) return;
+            if (askCageLowerExMaxQty == 0 || n.price > askCageLowerExMaxPrice) {
+                snap.ask[lv++] = PriceLevel(fmtPx(n.price, instType, secSrc),
+                                            qtyInter2Snap(n.qty, secSrc));
             }
-        }
+        });
     }
     for (int i = lv; i < levelNb; i++) snap.ask[i] = PriceLevel(0, 0);
 
     setSnapFixParam(snap);
     snap.NumTrades        = NumTrades;
-    snap.TotalVolumeTrade = TotalVolumeTrade;
-    snap.TotalValueTrade  = TotalValueTrade;
+    // 内部 ×10^5 → 快照原始精度 (量: 深 ÷1000 沪 ÷100; 额: 深 ÷10 沪 ÷1)
+    snap.TotalVolumeTrade = qtyInter2Snap(TotalVolumeTrade, secSrc);
+    snap.TotalValueTrade  = amtInter2Snap(TotalValueTrade, secSrc);
     snap.LastPx = fmtPx(LastPx, instType, secSrc);
     snap.HighPx = fmtPx(HighPx, instType, secSrc);
     snap.LowPx  = fmtPx(LowPx,  instType, secSrc);
@@ -305,17 +406,20 @@ AxsbeSnapStock AXOB::genTradingSnap(bool isVolBreaking, int levelNb) {
         snap.BidWeightPx = 0; snap.BidWeightSize = 0;
         snap.AskWeightPx = 0; snap.AskWeightSize = 0;
     } else {
+        // 加权均价 = Σ(px×qty)/Σqty, 四舍五入 (×2 +1 >>1)。
+        // 中间量 __int128: Σ(px×qty) 在 ×10^5 下远超 int64; 商回落到内部价量级后
+        // 才收窄为 int64 交给 fmtPx 换算。
         if (BidWeightSize != 0) {
-            snap.BidWeightPx = (int32_t)(((BidWeightValue << 1) / BidWeightSize + 1) >> 1);
-            snap.BidWeightPx = fmtPx(snap.BidWeightPx, instType, secSrc);
+            int64_t wpx = (int64_t)(((BidWeightValue << 1) / BidWeightSize + 1) >> 1);
+            snap.BidWeightPx = fmtPx(wpx, instType, secSrc);
         } else snap.BidWeightPx = 0;
-        snap.BidWeightSize = BidWeightSize;
+        snap.BidWeightSize = qtyInter2Snap(BidWeightSize, secSrc);
 
         if (AskWeightSize != 0) {
-            snap.AskWeightPx = (int32_t)(((AskWeightValue << 1) / AskWeightSize + 1) >> 1);
-            snap.AskWeightPx = fmtPx(snap.AskWeightPx, instType, secSrc);
+            int64_t wpx = (int64_t)(((AskWeightValue << 1) / AskWeightSize + 1) >> 1);
+            snap.AskWeightPx = fmtPx(wpx, instType, secSrc);
         } else snap.AskWeightPx = 0;
-        snap.AskWeightSize = AskWeightSize;
+        snap.AskWeightSize = qtyInter2Snap(AskWeightSize, secSrc);
     }
 
     setSnapTimestamp(snap);

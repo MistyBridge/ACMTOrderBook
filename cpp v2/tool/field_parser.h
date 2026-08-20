@@ -29,6 +29,7 @@
 #else
     #include <x86intrin.h>
     #include <nmmintrin.h>
+    #include <cpuid.h>
 #endif
 
 // =====================================================================
@@ -48,9 +49,15 @@ inline bool hasSSE42() {
     static bool checked = false;
     static bool result = false;
     if (!checked) {
+#ifdef _MSC_VER
         int cpuInfo[4];
         __cpuid(cpuInfo, 1);
         result = (cpuInfo[2] & (1 << 20)) != 0;
+#else
+        unsigned int eax = 0, ebx = 0, ecx = 0, edx = 0;
+        __get_cpuid(1, &eax, &ebx, &ecx, &edx);
+        result = (ecx & (1u << 20)) != 0;  // SSE4.2 标志位
+#endif
         checked = true;
     }
     return result;
