@@ -22,6 +22,7 @@ struct AxsbeExe : public AxsbeMessageBase<AxsbeExe> {
     int64_t  LastQty         = 0;
     uint8_t  ExecType        = 0;    // 'F'=成交, '4'=撤单
     uint64_t TransactTime    = 0;
+    uint64_t BizIndex        = 0;    // 上交所: 业务序号
 
     // ---- 从 Key=Value 字典加载 ----
     void loadDict(const std::unordered_map<std::string, int64_t>& dict) {
@@ -89,10 +90,9 @@ struct AxsbeExe : public AxsbeMessageBase<AxsbeExe> {
         return TPM::Ending;
     }
 
+    // 时间口径统一: 深沪均使用 YYYYMMDDHHMMSSsss (北京时间) 十进制整数
     uint64_t HHMMSSms() const {
-        if (secSrc == SecurityIDSource_SZSE)
-            return TransactTime % 1000000000ULL;
-        return TransactTime;
+        return TransactTime % 1000000000ULL;
     }
 
     std::string toString() const {

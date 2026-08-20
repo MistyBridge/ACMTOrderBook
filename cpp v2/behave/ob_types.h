@@ -66,12 +66,14 @@ inline MarketSubType marketSubType(SecurityIDSource src, int securityID) {
 }
 
 // ---- 市场常量（由第一条快照初始化）----
+// 注意两种精度域并存: *Px 为快照原始精度 (深 ×10^4 / 沪 ×10^3, 原样保留供快照回吐);
+//                     *Price 与 PrevClosePx 为内部精度 (×10^5, 参与簿内比较运算)。
 struct MarketInfo {
-    int32_t  PrevClosePx   = 0;
-    int32_t  UpLimitPx     = 0;
-    int32_t  DnLimitPx     = 0;
-    int32_t  UpLimitPrice  = 0;
-    int32_t  DnLimitPrice  = 0;
+    int64_t  PrevClosePx   = 0;   // 内部 ×10^5
+    int32_t  UpLimitPx     = 0;   // 原始精度
+    int32_t  DnLimitPx     = 0;   // 原始精度
+    int64_t  UpLimitPrice  = 0;   // 内部 ×10^5
+    int64_t  DnLimitPrice  = 0;   // 内部 ×10^5
     uint16_t ChannelNo     = 0;
     uint64_t YYMMDD        = 0;
 };
@@ -84,42 +86,31 @@ struct MarketInfo {
 struct ObOrder {
     uint64_t applSeqNum;       // 8B  offset=0
     uint64_t TransactTime = 0; // 8B  offset=8
-    int32_t  price;            // 4B  offset=16
-    int32_t  qty;              // 4B  offset=20
-    Side     side;             // 1B  offset=24
-    OrdType  type;             // 1B  offset=25
-    bool     traded = false;   // 1B  offset=26
-    // 1B 尾部 padding → 28B → 对齐到 8B → 32B total
+    uint64_t bizIndex = 0;     // 8B  offset=16 上交所: 业务序号 (成交门控: trade.biz > order.biz 才削减主动侧)
+    int64_t  qty;              // 8B  offset=24 (内部 ×10^5, 单档可超 21 亿股, 必须 int64)
+    int64_t  price;            // 8B  offset=32 (内部 ×10^5, int32 上限 21474.83 元不够)
+    Side     side;             // 1B  offset=40
+    OrdType  type;             // 1B  offset=41
+    bool     traded = false;   // 1B  offset=42
+    // 5B 尾部 padding → 48B total
+    ObOrder() : applSeqNum(0), TransactTime(0), bizIndex(0), qty(0),
+                price(0), side(Side::UNKNOWN), type(OrdType::UNKNOWN) {}
 
-    ObOrder() : applSeqNum(0), TransactTime(0), price(0), qty(0),
-                side(Side::UNKNOWN), type(OrdType::UNKNOWN) {}
-
-    ObOrder(const AxsbeOrder& raw, InstrumentType instType)
+    ObOrder(const AxsbeOrder& raw, [[maybe_unused]] InstrumentType instType)
         : applSeqNum(raw.ApplSeqNum), TransactTime(raw.TransactTime),
-          qty(static_cast<int32_t>(raw.OrderQty))
+          bizIndex(raw.BizIndex), qty(qtySnap2Inter(raw.OrderQty, raw.secSrc))
     {
         // [v2优化] 分支预测提示：价格溢出是极罕见事件
         if (UNLIKELY(raw.Price == ORDER_PRICE_OVERFLOW)) {
             price = PRICE_MAXIMUM;
         } else {
-            // 精度转换（深交所是热路径）
-            if (LIKELY(raw.secSrc == SecurityIDSource_SZSE)) {
-                if (LIKELY(instType == InstrumentType::STOCK))
-                    price = static_cast<int32_t>(raw.Price / SZSE_STOCK_PRICE_RD);
-                else if (instType == InstrumentType::FUND)
-                    price = static_cast<int32_t>(raw.Price / SZSE_FUND_PRICE_RD);
-                else if (instType == InstrumentType::KZZ)
-                    price = static_cast<int32_t>(raw.Price / SZSE_KZZ_PRICE_RD);
-                else
-                    price = 0;
-            } else if (raw.secSrc == SecurityIDSource_SSE) {
-                if (instType == InstrumentType::STOCK)
-                    price = static_cast<int32_t>(raw.Price / SSE_STOCK_PRICE_RD);
-                else
-                    price = 0;
-            } else {
-                price = 0;
-            }
+            // 精度转换: 原始 → 内部 ×10^5 (乘法, 无截断)。
+            // 统一定点后与品种 (股票/基金/可转债) 无关, 仅交易所原始精度不同。
+            price = (LIKELY(raw.secSrc == SecurityIDSource_SZSE))
+                        ? raw.Price * SZSE_PRICE_MUL
+                        : ((raw.secSrc == SecurityIDSource_SSE)
+                               ? raw.Price * SSE_PRICE_MUL
+                               : 0);
         }
 
         side = raw.isBuy() ? Side::BID : (raw.isSell() ? Side::ASK : Side::UNKNOWN);
@@ -138,35 +129,27 @@ struct ObExec {
     uint64_t BidApplSeqNum;       // 8B offset=0
     uint64_t OfferApplSeqNum;     // 8B offset=8
     uint64_t TransactTime;        // 8B offset=16
-    int32_t  LastPx;              // 4B offset=24
-    int32_t  LastQty;             // 4B offset=28
-    TPM      tradingPhaseMarket;  // 1B offset=32 → pad(3) → 40B total
+    int64_t  LastPx;              // 8B offset=24 (内部 ×10^5)
+    int64_t  LastQty;             // 8B offset=32 (内部 ×10^5, 单笔可超 21 亿股, 必须 int64)
+    TPM      tradingPhaseMarket;  // 1B offset=40
+    // 7B pad → uint64 BizIndex offset=48 → 56B total
 
-    ObExec(const AxsbeExe& raw, InstrumentType instType)
+    uint64_t BizIndex = 0;        // 上交所: 业务序号 (成交门控)
+
+    ObExec(const AxsbeExe& raw, [[maybe_unused]] InstrumentType instType)
         : BidApplSeqNum(raw.BidApplSeqNum),
           OfferApplSeqNum(raw.OfferApplSeqNum),
           TransactTime(raw.TransactTime),
-          LastQty(static_cast<int32_t>(raw.LastQty)),
+          LastQty(qtySnap2Inter(raw.LastQty, raw.secSrc)),
+          BizIndex(raw.BizIndex),
           tradingPhaseMarket(TPM::Unknown)
     {
-        // [v2优化] 分支预测提示
-        if (LIKELY(raw.secSrc == SecurityIDSource_SZSE)) {
-            if (LIKELY(instType == InstrumentType::STOCK))
-                LastPx = static_cast<int32_t>(raw.LastPx / SZSE_STOCK_PRICE_RD);
-            else if (instType == InstrumentType::FUND)
-                LastPx = static_cast<int32_t>(raw.LastPx / SZSE_FUND_PRICE_RD);
-            else if (instType == InstrumentType::KZZ)
-                LastPx = static_cast<int32_t>(raw.LastPx / SZSE_KZZ_PRICE_RD);
-            else
-                LastPx = 0;
-        } else if (raw.secSrc == SecurityIDSource_SSE) {
-            if (instType == InstrumentType::STOCK)
-                LastPx = static_cast<int32_t>(raw.LastPx / SSE_STOCK_PRICE_RD);
-            else
-                LastPx = 0;
-        } else {
-            LastPx = 0;
-        }
+        // 精度转换: 原始 → 内部 ×10^5 (乘法, 与品种无关)
+        LastPx = (LIKELY(raw.secSrc == SecurityIDSource_SZSE))
+                     ? raw.LastPx * SZSE_PRICE_MUL
+                     : ((raw.secSrc == SecurityIDSource_SSE)
+                            ? raw.LastPx * SSE_PRICE_MUL
+                            : 0);
     }
 };
 
@@ -175,33 +158,31 @@ struct ObExec {
 struct ObCancel {
     uint64_t applSeqNum;      // 8B offset=0
     uint64_t TransactTime;    // 8B offset=8
-    int32_t  qty;             // 4B offset=16
-    int32_t  price;           // 4B offset=20
-    Side     side;            // 1B offset=24 → pad(3) → 32B total
+    int64_t  qty;             // 8B offset=16 (内部 ×10^5)
+    int64_t  price;           // 8B offset=24 (内部 ×10^5)
+    Side     side;            // 1B offset=32 → pad(7) → 40B total
 };
 
 // ---- level_node：价格档位 ----
+// price/qty 均 int64: 内部定点 ×10^5 下, 价格 int32 上限仅 21474.83 元,
+// 单档挂单 (如涨停封单 13 亿股 → 1.3e14) 更是远超 int32, 溢出会直接摧毁订单簿。
 struct LevelNode {
-    int32_t price = 0;
-    int32_t qty   = 0;
+    int64_t price = 0;
+    int64_t qty   = 0;
     LevelNode() = default;
-    LevelNode(int32_t p, int32_t q) : price(p), qty(q) {}
+    LevelNode(int64_t p, int64_t q) : price(p), qty(q) {}
 };
 
 // ---- 工具函数 ----
-inline int32_t fmtPriceInter2Snap(int32_t price, InstrumentType instType, SecurityIDSource src) {
-    if (src == SecurityIDSource_SZSE) {
-        if (instType == InstrumentType::STOCK)
-            return price * (PRICE_SZSE_SNAP_PRECISION / PRICE_INTER_STOCK_PRECISION);
-        if (instType == InstrumentType::FUND)
-            return price * (PRICE_SZSE_SNAP_PRECISION / PRICE_INTER_FUND_PRECISION);
-        if (instType == InstrumentType::KZZ)
-            return price * (PRICE_SZSE_SNAP_PRECISION / PRICE_INTER_KZZ_PRECISION);
-    } else if (src == SecurityIDSource_SSE) {
-        if (instType == InstrumentType::STOCK)
-            return price * (PRICE_SSE_PRECISION / PRICE_INTER_STOCK_PRECISION);
-    }
-    return price;
+// 内部价 (×10^5) → 快照原始精度 (深 ×10^4 / 沪 ×10^3)。
+// 统一定点后与品种无关: 内部精度已高于各交易所原始精度, 一律为除。
+inline int32_t fmtPriceInter2Snap(int64_t price, [[maybe_unused]] InstrumentType instType,
+                                  SecurityIDSource src) {
+    if (src == SecurityIDSource_SZSE)
+        return static_cast<int32_t>(price / SZSE_PRICE_MUL);
+    if (src == SecurityIDSource_SSE)
+        return static_cast<int32_t>(price / SSE_PRICE_MUL);
+    return static_cast<int32_t>(price);
 }
 
 inline int32_t clipInt32(int64_t x) {
@@ -211,7 +192,7 @@ inline int32_t clipInt32(int64_t x) {
 }
 
 // =====================================================================
-//  HybridLevelBook — 混合价格档位簿（替代 std::map<int32_t, LevelNode>）
+//  HybridLevelBook — 混合价格档位簿（替代 std::map<int64_t, LevelNode>）
 //
 //  根据档位数量动态选择存储方式：
 //    n ≤ 256 : 排序数组（连续内存，CPU 预取命中，无指针追逐）
@@ -304,13 +285,13 @@ struct HybridLevelBook {
     int       count = 0;
 
     // ---- std::map 模式（大 n 回退）----
-    std::map<int32_t, LevelNode> treeLevels;
+    std::map<int64_t, LevelNode> treeLevels;
 
     // ================================================================
     //  find() — 查找指定价格的档位（模式无关）
     // ================================================================
     // [v2.6] 二分查找优化：O(n) → O(log n)
-    LevelNode* find(int32_t price) {
+    LevelNode* find(int64_t price) {
         if (LIKELY(!useMap)) {
             int lo = 0, hi = count - 1;
             while (lo <= hi) {
@@ -326,7 +307,7 @@ struct HybridLevelBook {
         }
     }
     // [v2.6] 二分查找优化（const 版本）
-    const LevelNode* find(int32_t price) const {
+    const LevelNode* find(int64_t price) const {
         if (LIKELY(!useMap)) {
             int lo = 0, hi = count - 1;
             while (lo <= hi) {
@@ -345,7 +326,7 @@ struct HybridLevelBook {
     // ================================================================
     //  insert() — 插入新档位（维持升序排列，模式无关）
     // ================================================================
-    LevelNode* insert(int32_t price, int32_t qty) {
+    LevelNode* insert(int64_t price, int64_t qty) {
         if (LIKELY(!useMap)) {
             if (UNLIKELY(count >= HYBRID_ARRAY_MAX)) {
                 migrateToMap();
@@ -374,7 +355,7 @@ struct HybridLevelBook {
     // ================================================================
     //  erase() — 删除指定价格的档位（模式无关）
     // ================================================================
-    void erase(int32_t price) {
+    void erase(int64_t price) {
         if (LIKELY(!useMap)) {
             // 二分查找要删除的位置
             int lo = 0, hi = count - 1;
@@ -401,7 +382,7 @@ struct HybridLevelBook {
     // ================================================================
     //  modifyQty() — 修改指定价格档位的数量（模式无关，热路径）
     // ================================================================
-    bool modifyQty(int32_t price, int32_t delta) {
+    bool modifyQty(int64_t price, int64_t delta) {
         if (LIKELY(!useMap)) {
             int lo = 0, hi = count - 1;
             while (lo <= hi) {
@@ -457,6 +438,29 @@ struct HybridLevelBook {
     }
 
     // ================================================================
+    //  clear() — 清空簿 (快照兜底重置用), 模式无关
+    // ================================================================
+    void clear() {
+        useMap = false;
+        count = 0;
+        treeLevels.clear();
+    }
+
+    // ================================================================
+    //  bestBid()/bestAsk() — 最优档指针 (买方=最高价, 卖方=最低价), 模式无关
+    // ================================================================
+    const LevelNode* bestBid() const {
+        if (LIKELY(!useMap)) return (count > 0) ? &levels[count - 1] : nullptr;
+        auto it = treeLevels.rbegin();
+        return (it != treeLevels.rend()) ? &it->second : nullptr;
+    }
+    const LevelNode* bestAsk() const {
+        if (LIKELY(!useMap)) return (count > 0) ? &levels[0] : nullptr;
+        auto it = treeLevels.begin();
+        return (it != treeLevels.end()) ? &it->second : nullptr;
+    }
+
+    // ================================================================
     //  迁移：array → map
     // ================================================================
     void migrateToMap() {
@@ -490,9 +494,10 @@ static_assert(std::is_trivially_copyable_v<ObExec>,
 static_assert(std::is_trivially_copyable_v<LevelNode>,
               "LevelNode must be trivially copyable");
 
-// [v2优化] 结构体大小约束
-static_assert(sizeof(ObOrder) <= 32,
-              "ObOrder should fit in 32B after field reordering");
-static_assert(sizeof(LevelNode) == 8,
-              "LevelNode should be exactly 8B (two int32)");
+// [v2优化] 结构体大小约束。统一定点 ×10^5 后 price 升 int64:
+// ObOrder 40B → 48B (换取价格无溢出上限 + 消除品种精度特例)。
+static_assert(sizeof(ObOrder) <= 48,
+              "ObOrder should fit in 48B (int64 price for ×10^5 fixed point)");
+static_assert(sizeof(LevelNode) == 16,
+              "LevelNode should be exactly 16B (int64 price + int64 qty)");
 // 注意：HybridLevelBook 包含 std::map，不能 trivially copy
