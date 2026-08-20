@@ -7,7 +7,6 @@ project(AXOrderBook_v2 LANGUAGES CXX)
 option(USE_ROBIN_HOOD "Use robin_hood::unordered_map" OFF)
 option(USE_PHMAP "Use phmap::flat_hash_map (Google abseil)" OFF)
 option(USE_UNORDERED_DENSE "Use ankerl::unordered_dense::map" OFF)
-option(BUILD_BENCHMARK "Build hashmap benchmark" ON)
 
 # [v2.2] 平铺哈希表选项
 # USE_FLAT_HASHMAP=0: std::unordered_map (默认)
@@ -384,36 +383,3 @@ if(USE_UNORDERED_DENSE)
     endif()
 endif()
 
-# =====================================================================
-#  基准测试目标
-# =====================================================================
-
-if(BUILD_BENCHMARK)
-    add_executable(hashmap_benchmark benchmark/hashmap_benchmark.cpp)
-    target_compile_features(hashmap_benchmark PRIVATE cxx_std_17)
-
-    # MSVC 特定选项
-    if(MSVC)
-        target_compile_options(hashmap_benchmark PRIVATE
-            /utf-8 /O2 /arch:AVX2
-        )
-    else()
-        target_compile_options(hashmap_benchmark PRIVATE
-            -O3 -march=native
-        )
-    endif()
-
-    # 链接哈希表库（如果启用）
-    if(USE_ROBIN_HOOD)
-        target_link_libraries(hashmap_benchmark PRIVATE robin_hood::robin_hood)
-        target_compile_definitions(hashmap_benchmark PRIVATE USE_ROBIN_HOOD)
-    endif()
-    if(USE_PHMAP)
-        target_link_libraries(hashmap_benchmark PRIVATE absl::flat_hash_map)
-        target_compile_definitions(hashmap_benchmark PRIVATE USE_PHMAP)
-    endif()
-    if(USE_UNORDERED_DENSE)
-        target_include_directories(hashmap_benchmark PRIVATE "${UNORDERED_DENSE_INCLUDE_DIR}")
-        target_compile_definitions(hashmap_benchmark PRIVATE USE_UNORDERED_DENSE)
-    endif()
-endif()
