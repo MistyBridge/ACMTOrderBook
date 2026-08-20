@@ -6,6 +6,7 @@
 #include <cstring>
 #include <string>
 #include <map>
+#include <algorithm>
 #include <vector>
 
 #include "../cpp v2/behave/axob.h"
@@ -328,6 +329,7 @@ static int64_t replayChImpl(acmt_ob_handle h,
         auto tL1 = std::chrono::high_resolution_clock::now();
         AxsbeOrder ord; AxsbeExe exe; AxsbeSnapStock snap;
         int64_t n = 0;
+        std::vector<int64_t> latNs;   // 事件级处理耗时 (ns), bench 模式收集
         std::chrono::duration<double> fetchS(0);   // hasNext 中的阻塞拉取+解析
         while (true) {
             auto tF0 = std::chrono::high_resolution_clock::now();
@@ -343,7 +345,11 @@ static int64_t replayChImpl(acmt_ob_handle h,
                 if (sod >= skipSod && sod < (int64_t)skipSod + skipSec) continue;
             }
             if (type == MsgType_order) {
+                auto lt0 = std::chrono::high_resolution_clock::now();
                 ob->engine.onMsg(ord);
+                if (!validate)
+                    latNs.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::high_resolution_clock::now() - lt0).count());
                 ob->orderCount++;
                 if (validate) ob->afterEvent();
             } else if (type == MsgType_exe) {
@@ -353,11 +359,19 @@ static int64_t replayChImpl(acmt_ob_handle h,
                     if (validate) ob->barTick(exe);
                     ob->tradeCount++;
                 }
+                auto lt1 = std::chrono::high_resolution_clock::now();
                 ob->engine.onMsg(exe);
+                if (!validate)
+                    latNs.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::high_resolution_clock::now() - lt1).count());
                 if (validate) ob->afterEvent();
             } else if (type == MsgType_snap) {
                 if (validate) ob->pushSnap(snap);
+                auto lt2 = std::chrono::high_resolution_clock::now();
                 ob->engine.onMsg(snap);
+                if (!validate)
+                    latNs.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::high_resolution_clock::now() - lt2).count());
                 if (validate) ob->afterEvent();
             } else {
                 continue;
@@ -377,6 +391,14 @@ static int64_t replayChImpl(acmt_ob_handle h,
         double wallS   = std::chrono::duration<double>(tR - tL1).count();
         double fetchSec = fetchS.count();
         double replayS = wallS - fetchSec;   // 引擎纯处理 (不含拉取/解析, 口径同旧 replay)
+        if (!validate && !latNs.empty()) {
+            std::sort(latNs.begin(), latNs.end());
+            size_t k = latNs.size();
+            auto pct = [&](double p) { return (double)latNs[(size_t)(p * (k - 1))]; };
+            fprintf(stderr, "LAT n=%zu p50=%.1f p99=%.1f p99.9=%.1f pmax=%.1f (ns/msg)\n",
+                    k, pct(0.50), pct(0.99), pct(0.999), pct(1.0));
+        }
+
         fprintf(stderr, "REPLAYSTAT load=%.3fs fetch=%.2fs replay=%.2fs msgs=%lld (%.2fM msg/s 纯处理%s)\n",
                 loadS, fetchSec, replayS, (long long)n,
                 replayS > 0 ? n / replayS / 1e6 : 0.0,
