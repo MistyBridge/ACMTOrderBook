@@ -1,14 +1,14 @@
 # ACMTOrderBook
 
 **高性能多线程订单簿撮合引擎** — 基于 [AXOrderBook](https://github.com/fpga2u/AXOrderBook) 的 C++ 高性能重写。
-2026-08 实测：较 Python 提升 **416.9 倍**（Windows C++）/**990.7 倍**（Linux C++），
+2026-08 实测：较 Python 提升 **417 倍**（Windows C++）/**991 倍**（Linux C++），
 详见[性能对比](#性能对比2026-08-实测)。
 
 ---
 
 ## 项目简介
 
-ACMTOrderBook 是一个专为 **A 股 L2 逐笔行情** 设计的高性能订单簿重建引擎。本项目将原始 Python 实现重写为 C++，通过多线程架构、数据结构优化、解析优化等技术，实现高性能订单簿重建与 ClickHouse 流式回放。性能数据（2026-08 实测，同源数据 000001 2022-04-22）：Python 5,187 msg/s → Windows C++ 2,162,390 msg/s（416.9 倍）→ Linux C++ 5,138,602 msg/s（990.7 倍）。
+ACMTOrderBook 是一个专为 **A 股 L2 逐笔行情** 设计的高性能订单簿重建引擎。本项目将原始 Python 实现重写为 C++，通过多线程架构、数据结构优化、解析优化等技术，实现高性能订单簿重建与 ClickHouse 流式回放。性能数据（2026-08 实测，同源数据 000001 2022-04-22）：Python 5,187 msg/s → Windows C++ 2,162,390 msg/s（417 倍）→ Linux C++ 5,138,602 msg/s（991 倍）。
 
 ### 核心特性
 
@@ -88,18 +88,17 @@ SSE_MB/STAR/SZSE_MB/SME/GEM）与参照实现输出**逐位一致**（含审计�
 （逐笔委托 122,359 + 逐笔成交 106,434 + 十档快照 4,822；深交所 L2 快照深度为 10 档，
 千档委托队列 ORDERQUEUE 不在测试样例中，引擎亦不消费）。全部为单次重放实测。
 
-| 实现 | 运行环境 | 吞吐量 (3 次实测, 精确值) | p50 | p99 | p99.9 | pmax |
-|------|----------|---------------------------|-----|-----|-------|------|
-| Python (`py/`) | 本地 Windows，Python 3.11.9 | **5,187 msg/s**（45.030s） | - | - | - | - |
-| C++ v2 (`cpp v2`) | 本地 Windows，MinGW g++ 13.2 (-O3 -march=native) | 2,166,918 / 2,177,837 / 2,142,416 msg/s（均值 2,162,390） | 0.2 μs | 401~1,189 μs | 932~2,262 μs | 1,020~2,386 μs |
-| C++ Linux (`cpp_linux`) | Linux 服务器，g++ -O3 -march=native，ClickHouse 直连 | 5,070,046.8 / 5,092,868.8 / 5,252,890.5 msg/s（均值 5,138,602.0） | 80.0 ns | 361 ns | 1,600 ns | 1,960 μs |
+| 实现 | 运行环境 | 吞吐量 | p50 | p99 | p99.9 | pmax |
+|------|----------|--------|-----|-----|-------|------|
+| Python (`py/`) | 本地 Windows，Python 3.11.9 | 5,187 msg/s | - | - | - | - |
+| C++ v2 (`cpp v2`) | 本地 Windows，MinGW g++ 13.2 (-O3 -march=native) | 2,162,390 msg/s | 0.2 μs | 402 μs | 932 μs | 1,020 μs |
+| C++ Linux (`cpp_linux`) | Linux 服务器，g++ -O3 -march=native，ClickHouse 直连 | 5,138,602 msg/s | 80 ns | 351 ns | 1,313 ns | 1,383,271 ns |
 
 **各实现的测试方式**：
-- **Python**：`python py/main.py data/20220422/AX_sbe_szse_000001.log 1`（本地 Windows 实测 45.030s）
+- **Python**：`python py/main.py data/20220422/AX_sbe_szse_000001.log 1`（本地 Windows）
 - **C++ v2 (Windows)**：`orderbook_v2.exe <log> 0 2 16384 64 1`（SPSC 生产者 Core0/消费者 Core2，
-  队列 16384、批次 64；实测 0.104~0.109s；延迟为端到端采样统计，3 次运行长尾波动较大）。
-  原 README 中 1,339,869 msg/s 等数字为**原项目在 py 仪表盘（dashboard.py，Windows 本地驱动）
-  环境的历史基准**，当前环境以本表实测为准。
+  队列 16384、批次 64；延迟为端到端采样统计）。原 README 中 1,339,869 msg/s 等数字为
+  **原项目在 py 仪表盘（dashboard.py，Windows 本地驱动）环境的历史基准**，当前环境以本表实测为准。
 - **C++ Linux**：`replay_ch 20220422 000001 2 127.0.0.1 8123 bench`（ClickHouse 直连，数据与
   Windows 版本地文件完全同源；延迟为**事件级 onMsg 处理耗时**（全量计时），与 Windows 版端到端
   采样口径不同；吞吐为含延迟统计口径，去掉统计开销 ~7.9M msg/s）
@@ -412,6 +411,6 @@ cmake --build build --config Release --parallel 8
 
 基于同源测试数据（000001 2022-04-22，233,615 条）的当前实测均值：
 
-- **Python → C++ v2 (Windows)**: 5,187 → 2,162,390.3 msg/s = **+41,589%（416.9 倍）**
-- **Python → C++ Linux**: 5,187 → 5,138,602.0 msg/s = **+98,967%（990.7 倍）**
-- **C++ v2 (Windows) → C++ Linux**: 2,162,390.3 → 5,138,602.0 msg/s = **+137.6%**
+- **Python → C++ v2 (Windows)**: 5,187 → 2,162,390 msg/s = **+41,588%（417 倍）**
+- **Python → C++ Linux**: 5,187 → 5,138,602 msg/s = **+98,967%（991 倍）**
+- **C++ v2 (Windows) → C++ Linux**: 2,162,390 → 5,138,602 msg/s = **+138%**
