@@ -80,6 +80,24 @@ CH_USER=research CH_PASSWORD=your_password ./demo/replay_ch 20260716 000001 2   
 `reg_stream.sh` 全量回归（9 标的 × 5 交易日 + 25 场单日 = 70 场，覆盖沪深两市 5 板块：
 SSE_MB/STAR/SZSE_MB/SME/GEM）与参照实现输出**逐位一致**（含审计列与 Volume/Turnover 域）。
 
+### 与 Windows 版（cpp v2）的差异与优化原因
+
+Linux 版引擎代码与 Windows 版同源（`behave/` 订单簿核心一致），差异在数据路径与外围：
+
+| 方面 | Windows (cpp v2) | Linux (cpp_linux) | 优化原因 |
+|------|-----------------|-------------------|----------|
+| 数据源 | 本地 AX-SBE 文件（mmap 预加载） | ClickHouse 直连（ORDER/TRANSACTION/TICK 表） | 生产数据在 CH，免文件搬运 |
+| 数据组织 | 文件逐条解析 | 逐笔单流服务端 UNION ALL 全局排序，客户端无两路归并 | 委托+成交共享序列键（深 seq_no / 沪 biz_index），同毫秒顺序由服务端裁决 |
+| 快照归并 | 无（纯回放） | 快照全量驻留，按 `t ≤ 快照时间` 前缀插入逐笔流 | 对齐参照实现 mergeChrono 语义 |
+| 数据拉取 | mmap 内存读 | 逐笔全量物化（`ch::query` 一次驻留 139MB 级） | 流式长连接在大结果集下 CH 发送超时断连；全量物化与参照实现同构 |
+| 消费端 | producer/consumer 双线程 pipeline | 生产者线程 + 无锁队列 + 批消费 1024 | SPSC 保留，一批只经历一次等待 |
+| 延迟统计 | 每 8 条采样、端到端 | bench 模式事件级全量计时 | 更精确的单事件处理开销 |
+| 正确性校验 | 无 | 快照逐帧审计（num_trades 键窗口 [key,key+2] 匹配、集合竞价虚拟撮合盘口、收盘仅比 last、1s 聚合校验）+ 70 场回归 | 深沪两市重建与参照实现逐位一致 |
+
+**吞吐差异原因**：引擎核心同源，差异来自硬件平台（服务器 vs 本地 Windows 机器）、
+数据路径（全量物化内存读，无文件 I/O 瓶颈）与延迟口径（Windows 端到端含批等待与采样长尾，
+Linux 为事件级纯处理耗时）。
+
 ---
 
 ## 性能对比（2026-08 实测）
@@ -414,3 +432,13 @@ cmake --build build --config Release --parallel 8
 - **Python → C++ v2 (Windows)**: 5,187 → 2,162,390 msg/s = **+41,588%（417 倍）**
 - **Python → C++ Linux**: 5,187 → 5,138,602 msg/s = **+98,967%（991 倍）**
 - **C++ v2 (Windows) → C++ Linux**: 2,162,390 → 5,138,602 msg/s = **+138%**
+
+---
+
+## 全历史吞吐量性能曲线
+
+![全历史吞吐量性能曲线](throughput.png)
+
+- 蓝色曲线：**历史基准**（原项目各版本，py 仪表盘 Windows 环境测得，未复测）
+- 红色曲线：**2026-08 实测**（同源数据 000001 2022-04-22，233,615 条，纵轴对数）
+- 曲线脚本：`cpp_linux/plot_throughput.py`
