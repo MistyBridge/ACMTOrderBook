@@ -40,6 +40,46 @@ ACMTOrderBook 是一个专为 **A 股 L2 逐笔行情** 设计的高性能订单
 
 ---
 
+## ClickHouse 流式回放（cpp_linux，2026-08）
+
+Linux 版引擎（`cpp_linux/`）直连 ClickHouse 的 L2 数据表（`LEVEL2.ORDER_`/`TRANSACTION_`/`TICK_`），
+按交易所原生语义重建订单簿，支持深交所（exchange=2）与上交所（exchange=1）。
+
+### 架构（SPSC 单流）
+
+```
+ClickHouse ──逐笔单流 (ORDER ∪ TRANSACTION, 服务端全局排序)──► 生产者线程 ──► 无锁环形队列 ──► 引擎消费者
+                        ▲ 快照 (TICK 全量驻留, 按时间插入)                                   (批消费 1024)
+```
+
+- **数据侧单流**：委托+成交在服务端 `UNION ALL` 并按序列键全局排序（深：`seq_no`；沪：`biz_index` 跨表共享），
+  客户端无两路归并；快照按 `t ≤ 快照时间` 前缀插入（对齐参照实现 `mergeChrono` 语义）。
+- **SPSC 无锁队列**：生产者线程推入、引擎批消费（Disruptor 理念，一批只经历一次等待）。
+- **全量物化**：逐笔单流经 `ch::query` 一次物化驻留（139MB 级），避免流式长连接在大结果集下的
+  服务端发送超时断连。
+- **精度域**：CH 原始值域（价格 ×10⁴、数量百股 ×10²、金额 ×10⁴）在解析层换算回交易所原生精度，
+  引擎内部统一 ×10⁵ 定点。
+
+### 用法
+
+```bash
+cd cpp_linux && make
+# 凭据经环境变量传入 (不硬编码)
+CH_USER=research CH_PASSWORD=your_password ./demo/replay_ch 20260716 600584 1   # 沪市
+CH_USER=research CH_PASSWORD=your_password ./demo/replay_ch 20260716 000001 2   # 深市
+```
+
+回放结束输出逐帧审计：`NumTrades/Volume/Turnover` 与
+`AUDIT total/fullExact/mismatch/avgLvl/call_*/bar_*`（快照按 `num_trades` 键窗口匹配，
+连续竞价比 20 档+统计，集合竞价比虚拟撮合盘口，收盘竞价仅比 last）。
+
+### 回归验收
+
+`reg_stream.sh` 全量回归（9 标的 × 5 交易日 + 25 场单日 = 70 场，覆盖沪深两市 5 板块：
+SSE_MB/STAR/SZSE_MB/SME/GEM）与参照实现输出**逐位一致**（含审计列与 Volume/Turnover 域）。
+
+---
+
 ## 性能对比
 
 测试数据：深交所 000001（平安银行）2022-04-22 全日 L2 逐笔行情，共 **233,875 条消息**。
@@ -226,47 +266,27 @@ cmake --build build_pgo_opt --config Release --parallel 8
 
 ```
 ACMTOrderBook/
-├── Dashboard.exe          ← 对比仪表盘（双击运行）
-├── dashboard.py           ← 仪表盘源码
+├── dashboard.py           ← 对比仪表盘源码
 ├── py/
 │   ├── main.py            ← Python 入口
-│   ├── main.exe           ← Python 编译产物
 │   ├── behave/            ← 订单簿引擎核心
 │   └── tool/              ← 消息解析工具
 ├── cpp v1/                ← 单线程版本
 │   ├── main.cpp           ← C++ v1 入口
-│   ├── CMakeLists.txt
 │   ├── behave/            ← 订单簿引擎核心
 │   └── tool/              ← 消息解析工具
-├── cpp v2/                ← 多线程优化版本（最终版）
+├── cpp v2/                ← 多线程优化版本（Windows）
 │   ├── main.cpp           ← C++ v2 入口
-│   ├── CMakeLists.txt
 │   ├── core/              ← 基础组件 (SPSC队列、内存池、缓存行、CPU亲和性、延迟统计)
 │   ├── pipeline/          ← 管道架构 (生产者/消费者)
 │   ├── behave/            ← 订单簿引擎核心
 │   ├── tool/              ← 消息解析工具
-│   ├── orderbook_v2.1.exe ← v2.1 版本
-│   ├── orderbook_v2.2.exe ← v2.2 版本
-│   ├── orderbook_v2.3.exe ← v2.3 版本
-│   ├── orderbook_v2.4.exe ← v2.4 版本
-│   ├── orderbook_v2.5.exe ← v2.5 版本
-│   ├── orderbook_v2.6.exe ← v2.6 版本
-│   ├── orderbook_v2.7.exe ← v2.7 版本
-│   └── orderbook_v2.8.exe ← v2.8 版本（最终版）
-├── data/
-│   └── 20220422/          ← 测试数据目录
-└── doc/
-    └── cpp/               ← C++ 重写设计文档
-        ├── plan.md        ← 版本计划
-        ├── cpp-orderbook-performance.md ← 性能报告
-        ├── v2.1-msvc-optimization.md    ← v2.1 专项报告
-        ├── v2.2-full-profile.md         ← v2.2 专项报告
-        ├── v2.3-direct-parsing-optimization.md ← v2.3 专项报告
-        ├── v2.4-code-quality.md         ← v2.4 专项报告
-        ├── v2.5-pgo-optimization.md     ← v2.5 专项报告
-        ├── v2.6-zero-alloc-parsing.md   ← v2.6 专项报告
-        ├── v2.7-component-overhead.md   ← v2.7 专项报告
-        └── v2.8-forward-strstr.md       ← v2.8 专项报告
+│   └── source/            ← ClickHouse 数据源 (ch_client/clickhouse_source, 双平台)
+├── cpp_linux/             ← Linux 版引擎 + ClickHouse 流式回放
+│   ├── src/api.cpp        ← C API (快照校验闭环/1s 聚合校验)
+│   ├── demo/replay_ch.cpp ← 回放入口 (凭据走 CH_USER/CH_PASSWORD 环境变量)
+│   └── reg_stream.sh      ← 70 场全量回归脚本
+└── data/                  ← 测试数据 (体积大, 不入仓库, 见"数据源")
 ```
 
 ---
@@ -358,13 +378,11 @@ cmake --build build --config Release --parallel 8
 - **PGO**：Profile-Guided Optimization，+0.8% 吞吐量提升
 - **Huge Pages**：大页内存优化，+0.5% 吞吐量提升
 
-详细设计文档：[doc/cpp/plan.md](doc/cpp/plan.md)
-
 ---
 
 ## 数据源
 
-测试数据来自深交所 L2 行情，可从以下地址下载后放置于 `data/` 目录下：
+测试数据来自深交所 L2 行情，可从以下地址下载后放置于 `data/` 目录下（体积大，不入仓库）：
 
 链接：[百度盘](https://pan.baidu.com/s/13O7b30DXM64j4WpnNgvXXg)　提取码：`rxif`
 
@@ -377,14 +395,8 @@ cmake --build build --config Release --parallel 8
 ## 参考
 
 - 原项目：[fpga2u/AXOrderBook](https://github.com/fpga2u/AXOrderBook)
-- A 股 L2 行情背景：[交易所L2行情与撮合原理](/doc/SE.md)
-- 参考资料：[reference.md](/doc/reference.md)
 
 ---
-
-## 吞吐量演进折线图
-
-![吞吐量演进折线图](doc/cpp/throughput_evolution.png)
 
 ### 版本吞吐量数据
 
