@@ -11,6 +11,19 @@
 - Data: SZSE 000001 (Ping An Bank) 2022-04-22 L2 tick data, **233,875 messages** (22,365 orderbook events)
 - Validation: `NumTrades=81049 LastPx=1606 HighPx=1619 LowPx=1540`
 
+> **⚠️ 统计口径统一说明（以 Linux 版基准口径为准, 与 README 一致）**
+>
+> 为使 **cpp v2(Windows)** 与 **cpp_linux** 性能数字可比,Windows 侧已统一到 Linux 基准口径:
+>
+> - **吞吐量 = T2 引擎纯处理吞吐**:总真实消息数 / 引擎 `onMsg()` 纯计算耗时总和(剔除 I/O、解析、线程/排队开销)。
+> - **延迟 = L1 单事件处理延迟**:每条真实消息 `onMsg()` 的处理耗时,**逐条全量计时**(与 Linux 基准一致, 非抽样),报告 `p50/p99/p99.9/pmax`。
+> - **计时与百分位约定**:一律用单调时钟 `std::chrono::steady_clock`(Python 用 `time.perf_counter_ns()`);百分位索引统一 `floor(p×(N-1))`。
+> - **Linux 环境已不可访问**:Linux 基准数值为实习期间在公司环境实测,当前无法复测。
+>
+> **因此**:本文档下方出现的所有性能数字(v1~v2.1 的吞吐量、`p50/p99/p99.9/pmax` 等)为**口径统一前测得**,
+> 与新口径不可直接比较;新口径实测值需在真实 L2 行情数据上重测后填入。本仓库不含真实行情数据,
+> 在此前提下**未杜撰任何性能数字**。
+
 ---
 
 ## 版本总览

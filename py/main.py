@@ -24,7 +24,13 @@ def run(data_file, replay_count=1):
     total_snap = 0
     total_msgs = 0
 
-    t0 = time.time()
+    # 统一口径 (以 Linux 基准为准): L1 单事件 onMsg 延迟 (逐条全量) + T2 引擎纯处理吞吐 (剔除 I/O)
+    # 用 perf_counter_ns() (单调时钟)。延迟与纯处理耗时在一趟运行内同时给出。
+    latNs = []
+    sampled_compute_ns = 0
+    sampling_count = 0
+
+    t0 = time.perf_counter()
 
     for replay in range(replay_count):
         if replay_count > 1:
@@ -41,10 +47,16 @@ def run(data_file, replay_count=1):
         next_report = 0
         report_interval = 234
 
-        replay_t0 = time.time()
+        replay_t0 = time.perf_counter()
 
         for msg in axsbe_file(data_file):
+            # 逐条全量计时 (与 Linux 基准一致): 每条都掐表 onMsg 处理耗时
+            t0m = time.perf_counter_ns()
             axob.onMsg(msg)
+            d = time.perf_counter_ns() - t0m
+            latNs.append(d)
+            sampled_compute_ns += d
+            sampling_count += 1
             totalCnt += 1
             if hasattr(msg, 'ApplSeqNum') and hasattr(msg, 'OrderQty'):
                 orderCnt += 1
@@ -55,7 +67,7 @@ def run(data_file, replay_count=1):
             if totalCnt >= next_report:
                 # 计算全局消息数和实时速度
                 global_cnt = totalCnt + replay * totalCnt
-                elapsed_now = time.time() - replay_t0
+                elapsed_now = time.perf_counter() - replay_t0
                 speed = int(totalCnt / elapsed_now) if elapsed_now > 0 else 0
                 # 格式化为千分位，匹配仪表盘解析格式
                 print(f"  {global_cnt:,} msgs  |  {elapsed_now:.1f}s  |  {speed:,} msg/s")
@@ -71,8 +83,17 @@ def run(data_file, replay_count=1):
         if replay == replay_count - 1:
             print(f"\n=== Results ===")
             print(f"Total: {total_msgs:,} msgs (order={total_order:,} exe={total_exe:,} snap={total_snap:,})")
-            elapsed = time.time() - t0
+            elapsed = time.perf_counter() - t0
+            # Time 行保持 dashboard 兼容 (T1 系统端到端); 引擎口径另起一行
             print(f"Time:  {elapsed:.3f} s ({int(total_msgs/elapsed)} msg/s)")
+            # L1 单事件 onMsg 延迟 + T2 引擎纯处理吞吐 (逐条全量, 与 Linux 基准一致)
+            if latNs:
+                lat_list = sorted(latNs)
+                k = len(lat_list)
+                pct = lambda p: lat_list[int(p * (k - 1))] / 1000.0
+                engine_tput = (sampling_count * 1e9 / sampled_compute_ns) if sampled_compute_ns else 0.0
+                print(f"Throughput(engine): {engine_tput:,.0f} msg/s (引擎纯处理 T2, 剔除I/O, 逐条全量, n={sampling_count:,}/{total_msgs:,})")
+                print(f"Latency: p50={pct(0.50):.1f}us p99={pct(0.99):.1f}us p99.9={pct(0.999):.1f}us pmax={pct(1.0):.1f}us (L1 单事件onMsg)")
             print(f"\nOrderBook State:")
             print(f"  orderMap={axob.order_map_size} bidTree={axob.bid_level_tree_size} askTree={axob.ask_level_tree_size}")
             print(f"  bidMax={axob.bid_level_tree_max}  askMin={axob.ask_level_tree_min}")

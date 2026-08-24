@@ -11,6 +11,10 @@
 struct ConsumerStats {
     alignas(64) std::atomic<uint64_t> totalConsumed{0};
     alignas(64) std::atomic<uint64_t> totalTimeNs{0};
+    // ---- 引擎纯处理口径 (T2, 与 Linux 基准一致): 逐条全量 onMsg 耗时累加 与 条数 ----
+    // 吞吐 T2 = 全部真实消息数 * 1e9 / 全部 onMsg 耗时总和 (引擎纯处理速率, 剔除 I/O)
+    alignas(64) std::atomic<uint64_t> engineComputeNs{0};   // 全部 onMsg 耗时总和 (ns)
+    std::atomic<uint64_t> samplingCount{0};                 // 计入的真实消息条数 (= totalMsgs)
     int orderCnt = 0;
     int exeCnt   = 0;
     int snapCnt  = 0;

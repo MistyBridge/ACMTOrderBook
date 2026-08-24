@@ -110,37 +110,49 @@ void Pipeline::run() {
     result_.exeCnt = consumerStats.exeCnt;
     result_.snapCnt = consumerStats.snapCnt;
     result_.elapsedSec = elapsed;
-    result_.throughput = result_.totalMsgs / elapsed;
+    result_.throughput = result_.totalMsgs / elapsed;          // T1 系统端到端 (参考)
+    // T2 引擎纯处理吞吐: 全部真实消息数 * 1e9 / 全部 onMsg 耗时总和 (逐条全量, 与 Linux 基准一致)
+    result_.engineComputeNs = consumerStats.engineComputeNs.load(std::memory_order_relaxed);
+    result_.samplingCount   = consumerStats.samplingCount.load(std::memory_order_relaxed);
+    if (result_.engineComputeNs > 0 && result_.samplingCount > 0) {
+        result_.throughputEngine =
+            (double)result_.samplingCount * 1e9 / (double)result_.engineComputeNs;
+    }
     result_.latency = latency.snapshot();
     result_.producedTimeNs = producerStats.totalTimeNs.load(std::memory_order_relaxed);
     result_.consumedTimeNs = consumerStats.totalTimeNs.load(std::memory_order_relaxed);
 
-    // 输出结果（兼容 Dashboard.exe 解析格式）
+    // 输出结果（兼容 Dashboard.exe 解析格式; 主指标为 T2 引擎纯处理吞吐 + L1 延迟）
     printf("\n=== Results ===\n");
     printf("Total: %d msgs (order=%d exe=%d snap=%d)\n",
            result_.totalMsgs, result_.orderCnt, result_.exeCnt, result_.snapCnt);
+    // Time 行保持 dashboard.py 兼容格式 (T1 系统端到端); 引擎口径另起一行
     printf("Time:  %.3f s (%.0f msg/s)\n", result_.elapsedSec, result_.throughput);
-    printf("Latency: p50=%.1fus p90=%.1fus p99=%.1fus p99.9=%.1fus pmax=%.1fus\n",
+    printf("Throughput(engine): %.0f msg/s (引擎纯处理 T2, 剔除I/O)\n",
+           result_.throughputEngine);
+    // Latency 行保持 dashboard.py 兼容 (p50/p99/p99.9/pmax), 值为 L1 单事件 onMsg 耗时
+    printf("Latency: p50=%.1fus p99=%.1fus p99.9=%.1fus pmax=%.1fus (L1 单事件onMsg, 逐条全量, n=%llu/%d)\n",
            result_.latency.p50 / 1000.0,
-           result_.latency.p90 / 1000.0,
            result_.latency.p99 / 1000.0,
            result_.latency.p999 / 1000.0,
-           result_.latency.pmax / 1000.0);
+           result_.latency.pmax / 1000.0,
+           (unsigned long long)result_.samplingCount,
+           result_.totalMsgs);
 
     printf("\nOrderBook State:\n%s\n", axob.toString().c_str());
 
     auto [askLevels, bidLevels] = axob.getLevels(5);
-    printf("\n--- 5 Level OrderBook ---\n");
+    printf("\n--- 5 Level OrderBook (internal ×10^5) ---\n");
     for (int i = 4; i >= 0; i--) {
         auto it = askLevels.find(i);
         if (it != askLevels.end() && it->second.qty > 0)
-            printf("  Ask[%d]  %d * %d\n", i, it->second.price, it->second.qty);
+            printf("  Ask[%d]  %lld * %lld\n", i, (long long)it->second.price, (long long)it->second.qty);
     }
     printf("  -----\n");
     for (int i = 0; i < 5; i++) {
         auto it = bidLevels.find(i);
         if (it != bidLevels.end() && it->second.qty > 0)
-            printf("  Bid[%d]  %d * %d\n", i, it->second.price, it->second.qty);
+            printf("  Bid[%d]  %lld * %lld\n", i, (long long)it->second.price, (long long)it->second.qty);
     }
     fflush(stdout);
 }

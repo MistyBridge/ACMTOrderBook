@@ -188,14 +188,14 @@ std::string AXOB::toString() const {
     snprintf(buf, sizeof(buf),
         "%06d tick=%llu msgs=%d\n"
         "  orderMap=%d bidTree=%d askTree=%d\n"
-        "  bidMax=%d*%d  askMin=%d*%d\n"
-        "  LastPx=%d HighPx=%d LowPx=%d OpenPx=%d\n"
+        "  bidMax=%lld*%lld  askMin=%lld*%lld\n"
+        "  LastPx=%lld HighPx=%lld LowPx=%lld OpenPx=%lld\n"
         "  NumTrades=%lld TVol=%lld TVal=%lld\n"
         "  tradingPhase=%s",
         SecurityID, (unsigned long long)currentIncTick, msgNb,
         orderMapSize(), bidTreeSize(), askTreeSize(),
-        bidMaxPrice, bidMaxQty, askMinPrice, askMinQty,
-        LastPx, HighPx, LowPx, OpenPx,
+        (long long)bidMaxPrice, (long long)bidMaxQty, (long long)askMinPrice, (long long)askMinQty,
+        (long long)LastPx, (long long)HighPx, (long long)LowPx, (long long)OpenPx,
         (long long)NumTrades, (long long)TotalVolumeTrade, (long long)TotalValueTrade,
         tpm_str(tradingPhase));
     return buf;

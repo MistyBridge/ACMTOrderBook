@@ -2,10 +2,13 @@
 // =====================================================================
 //  core/latency_stats.h — 延迟统计器
 //
-//  使用固定大小环形缓冲区存储采样值（默认 65536 条），
+//  使用固定大小环形缓冲区存储采样值（默认 1<<20 条, 足够容纳单次重放全量逐条计时, 避免绕回）。
 //  record() 为 O(1) 的简单写入。
 //  snapshot() 内部拷贝有效数据后使用 std::nth_element (O(n)) 计算
 //  p50 / p99 / p999 / pmax 百分位，不修改原始数据。
+//
+//  口径 (统一基准): 采样值 = 单条事件 onMsg() 处理耗时 (L1, 纳秒),
+//  由调用方传入单调时钟 steady_clock 的差值。百分位索引为去尾的近邻索引。
 //
 //  用法示例：
 //    LatencyStats stats;
@@ -44,7 +47,7 @@ public:
     //  构造函数
     //  bufferSize: 环形缓冲区容量，向上取整到 2 的幂（默认 65536）
     // ---------------------------------------------------------------
-    explicit LatencyStats(size_t bufferSize = 65536)
+    explicit LatencyStats(size_t bufferSize = (1u << 20))   // 1<<20, 单次重放全量逐条计时不绕回
         : capacity_(roundUpPow2(bufferSize))
         , mask_(capacity_ - 1)
     {
@@ -122,10 +125,11 @@ public:
         // 使用 nth_element 逐级定位百分位
         // 注意：后续 nth_element 可能移动前一级的迭代器所指元素，
         //       因此每次 nth_element 之后立即保存结果。
-        auto p50_it  = tmp.begin() + static_cast<ptrdiff_t>(n / 2);
-        auto p90_it  = tmp.begin() + static_cast<ptrdiff_t>(n * 90 / 100);
-        auto p99_it  = tmp.begin() + static_cast<ptrdiff_t>(n * 99 / 100);
-        auto p999_it = tmp.begin() + static_cast<ptrdiff_t>(n * 999 / 1000);
+        // 百分位索引统一为 "nearest-index" floor(p*(n-1)) (与其它版本同口径)。
+        auto p50_it  = tmp.begin() + static_cast<ptrdiff_t>((n - 1) / 2);
+        auto p90_it  = tmp.begin() + static_cast<ptrdiff_t>((n - 1) * 90 / 100);
+        auto p99_it  = tmp.begin() + static_cast<ptrdiff_t>((n - 1) * 99 / 100);
+        auto p999_it = tmp.begin() + static_cast<ptrdiff_t>((n - 1) * 999 / 1000);
 
         // 第 1 步：定位 p50
         if (p50_it != tmp.begin()) {

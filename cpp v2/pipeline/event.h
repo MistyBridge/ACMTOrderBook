@@ -7,6 +7,16 @@
 #include "../tool/axsbe_snap_stock.h"
 #include "../behave/ob_types.h"  // AXSignal
 
+#ifdef _WIN32
+    #ifndef WIN32_LEAN_AND_MEAN
+        #define WIN32_LEAN_AND_MEAN
+    #endif
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
+    #include <windows.h>   // QueryPerformanceCounter (Windows 高分辨率单调时钟)
+#endif
+
 // =====================================================================
 //  MarketEvent — 统一消息事件
 //  生产者-消费者管道中的传输单元
@@ -20,8 +30,24 @@ enum class EventType : uint8_t {
     END     = 4,  // 生产者已读完文件，通知消费者退出
 };
 
+// 引擎基准统一口径: 一律用单调时钟计时, 避免受系统改时/校时影响。
+// Windows 用 QueryPerformanceCounter (QPC, 唯一高分辨率单调时钟);
+// Linux/其它平台用 steady_clock。延迟 = 单条事件 onMsg() 处理耗时 (L1);
+// 吞吐 = 引擎纯处理吞吐 (T2, 剔除 I/O)。
 inline uint64_t now_ns() {
-    return std::chrono::high_resolution_clock::now().time_since_epoch().count();
+#ifdef _WIN32
+    static const uint64_t qpcFreq = []() -> uint64_t {
+        LARGE_INTEGER f; QueryPerformanceFrequency(&f);
+        return f.QuadPart > 0 ? static_cast<uint64_t>(f.QuadPart) : 1;
+    }();
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return static_cast<uint64_t>(
+        static_cast<double>(c.QuadPart) * 1e9 / static_cast<double>(qpcFreq));
+#else
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+#endif
 }
 
 struct MarketEvent {

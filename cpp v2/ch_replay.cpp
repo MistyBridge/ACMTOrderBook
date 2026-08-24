@@ -10,11 +10,19 @@
 #include <string>
 #include <map>
 #include <vector>
+#include <algorithm>
+#include <cstdint>
 
 #include "behave/axob.h"
 #include "source/clickhouse_source.h"
 
 using namespace source;
+
+// 统一口径 (引擎基准): 单调时钟 + L1 单事件 onMsg 延迟 + T2 引擎纯处理吞吐 (剔除 I/O)
+inline uint64_t now_ns() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 struct CheckStat {
     long long total = 0, fullExact = 0, statsOnly = 0, mismatch = 0, levelMatchSum = 0;
@@ -44,9 +52,9 @@ int main(int argc, char* argv[]) {
     printf("=== ClickHouse 回放: %s %s @%s:%d ===\n", date.c_str(), inst.c_str(), host.c_str(), port);
 
     ClickHouseSource src(host, port, user, pass);
-    auto t0 = std::chrono::high_resolution_clock::now();
+    auto t0 = std::chrono::steady_clock::now();
     src.load(date, inst, 2);
-    auto t1 = std::chrono::high_resolution_clock::now();
+    auto t1 = std::chrono::steady_clock::now();
     printf("流式查询已建立 (TICK/ORDER/TRANSACTION 三路并发), 耗时 %.3fs\n",
            std::chrono::duration<double>(t1 - t0).count());
 
@@ -109,17 +117,21 @@ int main(int argc, char* argv[]) {
         }
     };
 
-    auto t2 = std::chrono::high_resolution_clock::now();
+    auto t2 = std::chrono::steady_clock::now();
     int64_t totalMsgs = 0, tradeCnt = 0;
+    std::vector<int64_t> latNs;     // L1 单事件 onMsg 处理耗时 (ns), 逐条全量 (与 Linux 基准一致)
     AxsbeOrder ord; AxsbeExe exe; AxsbeSnapStock snap;
     while (src.hasNext()) {
         int type = src.next(ord, exe, snap);
-        totalMsgs++;
+        bool isReal = (type == MsgType_order || type == MsgType_exe || type == MsgType_snap);
+        uint64_t t0m = isReal ? now_ns() : 0;   // 逐条全量计时 (与 Linux 基准一致)
         if (type == MsgType_order) {
             axob.onMsg(ord);
+            if (isReal) latNs.push_back(now_ns() - t0m);
             matchPending();
         } else if (type == MsgType_exe) {
             axob.onMsg(exe);
+            if (isReal) latNs.push_back(now_ns() - t0m);
             matchPending();
             if (exe.ExecType == 'F') tradeCnt++;
         } else if (type == MsgType_snap) {
@@ -129,20 +141,40 @@ int main(int argc, char* argv[]) {
                 pending[snap.NumTrades].push_back(snap);
             }
             axob.onMsg(snap);
+            if (isReal) latNs.push_back(now_ns() - t0m);
             matchPending();
         }
+        totalMsgs++;
     }
     for (auto& kv : pending)
         for (auto& s : kv.second) tryMatch(s, true);
 
-    auto t3 = std::chrono::high_resolution_clock::now();
+    auto t3 = std::chrono::steady_clock::now();
+    double wallSec = std::chrono::duration<double>(t3 - t2).count();
     printf("拉取完成: 快照 %lld, 委托 %lld, 成交/撤单 %lld, 共 %lld 条\n",
            (long long)src.snapCount(), (long long)src.orderCount(),
            (long long)src.exeCount(), (long long)src.eventCount());
-    printf("回放完成: %lld 条消息 (成交 %lld), 耗时 %.3fs (%.0f msg/s)\n",
-           (long long)totalMsgs, (long long)tradeCnt,
-           std::chrono::duration<double>(t3 - t2).count(),
-           totalMsgs / std::chrono::duration<double>(t3 - t2).count());
+
+    // L1 延迟 + T2 引擎纯处理吞吐 (逐条全量, 与 Linux 基准一致)
+    if (!latNs.empty()) {
+        uint64_t sum = 0;
+        for (auto v : latNs) sum += (uint64_t)v;
+        std::sort(latNs.begin(), latNs.end());
+        size_t k = latNs.size();
+        auto pct = [&](double p) { return (double)latNs[(size_t)(p * (k - 1))]; };
+        double engineTput = sum ? (double)k * 1e9 / (double)sum : 0.0;
+        printf("回放完成: %lld 条消息 (成交 %lld), 耗时 %.3fs (%.0f msg/s 端到端含拉取)\n",
+               (long long)totalMsgs, (long long)tradeCnt, wallSec,
+               wallSec > 0 ? totalMsgs / wallSec : 0.0);
+        printf("引擎口径: %.0f msg/s (纯处理 T2, 逐条全量, n=%llu/%lld)\n",
+               engineTput, (unsigned long long)k, (long long)totalMsgs);
+        printf("Latency(L1 单事件onMsg): p50=%.1fus p99=%.1fus p99.9=%.1fus pmax=%.1fus\n",
+               pct(0.50) / 1000.0, pct(0.99) / 1000.0, pct(0.999) / 1000.0, pct(1.0) / 1000.0);
+    } else {
+        printf("回放完成: %lld 条消息 (成交 %lld), 耗时 %.3fs (%.0f msg/s 端到端含拉取)\n",
+               (long long)totalMsgs, (long long)tradeCnt, wallSec,
+               wallSec > 0 ? totalMsgs / wallSec : 0.0);
+    }
     stTrading.print("连续竞价");
     stCall.print("集合竞价");
     printf("\nOrderBook State:\n%s\n", axob.toString().c_str());

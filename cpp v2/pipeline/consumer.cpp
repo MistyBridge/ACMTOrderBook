@@ -34,7 +34,11 @@
 //  优化策略：
 //    1. 动态批次：一次取空队列（最大 MAX_BATCH），适应负载变化
 //    2. 内存预取：处理当前消息时预取下一条到 L1 缓存
-//    3. [v2.8] 延迟采样：只对 1/8 消息记录延迟（节省 ~14ns/msg）
+//
+//  统一口径 (以 Linux 版基准口径为准, 逐条全量计时代码):
+//    延迟 L1 = 每条真实消息 onMsg() 处理耗时 (全量计时, 非抽样)
+//    吞吐 T2 = 真实消息总数 / 全部 onMsg 耗时总和 (引擎纯处理吞吐, 剔除 I/O)
+//    只有真实消息 (order/exec/snap) 计入; SIGNAL/END 不计。时间一律用单调时钟。
 // =====================================================================
 void consumerThread(axob::core::SPSCQueue<MarketEvent>& queue, AXOB& axob,
                     axob::core::LatencyStats& latency, ConsumerStats& stats) {
@@ -73,6 +77,12 @@ void consumerThread(axob::core::SPSCQueue<MarketEvent>& queue, AXOB& axob,
                 PREFETCH_READ(&batch[i + 1]);
             }
 
+            // 真实消息 (order/exec/snap) 才计入引擎口径; 逐条全量计时 (与 Linux 基准一致)
+            bool isReal = (batch[i].type == EventType::ORDER ||
+                           batch[i].type == EventType::EXEC  ||
+                           batch[i].type == EventType::SNAP);
+            uint64_t t0msg = isReal ? now_ns() : 0;
+
             // Dispatch to AXOB by type
             switch (batch[i].type) {
                 case EventType::ORDER:
@@ -99,9 +109,12 @@ void consumerThread(axob::core::SPSCQueue<MarketEvent>& queue, AXOB& axob,
                     goto done;
             }
 
-            // Latency sampling: only record when producer set timestamp
-            if (batch[i].enqueueTimestamp != 0) {
-                latency.record(now_ns() - batch[i].enqueueTimestamp);
+            // 逐条记录 L1 处理耗时并累加引擎纯处理时间 (T2 分母)
+            if (isReal) {
+                uint64_t d = now_ns() - t0msg;
+                latency.record(d);
+                stats.engineComputeNs.fetch_add(d, std::memory_order_relaxed);
+                stats.samplingCount.fetch_add(1, std::memory_order_relaxed);
             }
 
             totalConsumed++;

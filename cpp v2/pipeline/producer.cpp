@@ -106,12 +106,8 @@ void producerThread(const char* dataFile, axob::core::SPSCQueue<MarketEvent>& qu
                 slot->type = EventType::END;  // 标记为 END，消费者会忽略
             }
 
-            // [v2.8] 延迟采样：只对 1/8 消息设置时间戳
-            if ((totalProduced & 7) == 0) {
-                slot->enqueueTimestamp = now_ns();
-            }
-
-            // 提交入队
+            // 提交入队。延迟口径已改为"单事件 onMsg 耗时 (L1)",由消费者自采样,
+            // 生产者不再为每条消息打流水线时间戳 (旧 L2 管道延迟口径已废弃)。
             queue.commit_push();
 
             totalProduced++;

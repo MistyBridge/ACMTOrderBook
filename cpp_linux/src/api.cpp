@@ -8,9 +8,19 @@
 #include <map>
 #include <algorithm>
 #include <vector>
+#include <chrono>
 
 #include "../cpp v2/behave/axob.h"
 #include "../cpp v2/source/clickhouse_source.h"
+
+// 统一口径 (引擎基准): 一律用单调时钟 steady_clock 计时。
+namespace {
+using ObClock = std::chrono::steady_clock;
+inline uint64_t ob_now_ns() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        ObClock::now().time_since_epoch()).count();
+}
+} // namespace
 
 namespace {
 
@@ -323,18 +333,19 @@ static int64_t replayChImpl(acmt_ob_handle h,
                             int skipSod, int skipSec) {
     ObHandle* ob = H(h);
     try {
-        auto tL0 = std::chrono::high_resolution_clock::now();
+        auto tL0 = ObClock::now();
         source::ClickHouseSource src(host, port, user, password);
         src.load(date, instrument, exchange);   // 仅建立三路流式查询 (毫秒级)
-        auto tL1 = std::chrono::high_resolution_clock::now();
+        auto tL1 = ObClock::now();
         AxsbeOrder ord; AxsbeExe exe; AxsbeSnapStock snap;
         int64_t n = 0;
-        std::vector<int64_t> latNs;   // 事件级处理耗时 (ns), bench 模式收集
-        std::chrono::duration<double> fetchS(0);   // hasNext 中的阻塞拉取+解析
+        // L1 延迟 (bench 模式, 与 Linux 基准口径一致): 每条真实消息都掐表其单事件 onMsg 处理耗时 (ns)
+        std::vector<int64_t> latNs;
+        ObClock::duration fetchS(0);   // hasNext 中的阻塞拉取+解析
         while (true) {
-            auto tF0 = std::chrono::high_resolution_clock::now();
+            auto tF0 = ObClock::now();
             bool more = src.hasNext();
-            auto tF1 = std::chrono::high_resolution_clock::now();
+            auto tF1 = ObClock::now();
             fetchS += tF1 - tF0;
             if (!more) break;
             int type = src.next(ord, exe, snap);
@@ -344,12 +355,13 @@ static int64_t replayChImpl(acmt_ob_handle h,
                 int64_t sod = (int64_t)((tt % 1000000000ULL) / 1000);
                 if (sod >= skipSod && sod < (int64_t)skipSod + skipSec) continue;
             }
+            // 逐条全量计时 (与 Linux 基准口径一致): bench 模式下每条真实消息都掐表
+            bool isReal = (type == MsgType_order || type == MsgType_exe || type == MsgType_snap);
+            bool doTime = (isReal && !validate);
             if (type == MsgType_order) {
-                auto lt0 = std::chrono::high_resolution_clock::now();
+                uint64_t t0m = doTime ? ob_now_ns() : 0;
                 ob->engine.onMsg(ord);
-                if (!validate)
-                    latNs.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::high_resolution_clock::now() - lt0).count());
+                if (doTime) latNs.push_back(ob_now_ns() - t0m);
                 ob->orderCount++;
                 if (validate) ob->afterEvent();
             } else if (type == MsgType_exe) {
@@ -359,19 +371,15 @@ static int64_t replayChImpl(acmt_ob_handle h,
                     if (validate) ob->barTick(exe);
                     ob->tradeCount++;
                 }
-                auto lt1 = std::chrono::high_resolution_clock::now();
+                uint64_t t0m = doTime ? ob_now_ns() : 0;
                 ob->engine.onMsg(exe);
-                if (!validate)
-                    latNs.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::high_resolution_clock::now() - lt1).count());
+                if (doTime) latNs.push_back(ob_now_ns() - t0m);
                 if (validate) ob->afterEvent();
             } else if (type == MsgType_snap) {
                 if (validate) ob->pushSnap(snap);
-                auto lt2 = std::chrono::high_resolution_clock::now();
+                uint64_t t0m = doTime ? ob_now_ns() : 0;
                 ob->engine.onMsg(snap);
-                if (!validate)
-                    latNs.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::high_resolution_clock::now() - lt2).count());
+                if (doTime) latNs.push_back(ob_now_ns() - t0m);
                 if (validate) ob->afterEvent();
             } else {
                 continue;
@@ -386,23 +394,30 @@ static int64_t replayChImpl(acmt_ob_handle h,
                 for (auto& s : kv.second) ob->tryMatch(s, true);
             ob->pending.clear();
         }
-        auto tR = std::chrono::high_resolution_clock::now();
+        auto tR = ObClock::now();
         double loadS   = std::chrono::duration<double>(tL1 - tL0).count();
         double wallS   = std::chrono::duration<double>(tR - tL1).count();
-        double fetchSec = fetchS.count();
-        double replayS = wallS - fetchSec;   // 引擎纯处理 (不含拉取/解析, 口径同旧 replay)
+        double fetchSec = std::chrono::duration<double>(fetchS).count();
+        double replayS = wallS - fetchSec;   // 墙钟回放(含拉取) - 拉取 = 引擎侧耗时 (参考)
         if (!validate && !latNs.empty()) {
+            // T2 引擎纯处理吞吐 = 全部真实消息数 * 1e9 / 全部 onMsg 耗时总和 (逐条全量, 与 Linux 基准一致)
+            uint64_t sum = 0;
+            for (auto v : latNs) sum += (uint64_t)v;
             std::sort(latNs.begin(), latNs.end());
             size_t k = latNs.size();
             auto pct = [&](double p) { return (double)latNs[(size_t)(p * (k - 1))]; };
+            double engineTput = sum ? (double)k * 1e9 / (double)sum : 0.0;
             fprintf(stderr, "LAT n=%zu p50=%.1f p99=%.1f p99.9=%.1f pmax=%.1f (ns/msg)\n",
                     k, pct(0.50), pct(0.99), pct(0.999), pct(1.0));
+            fprintf(stderr,
+                    "REPLAYSTAT load=%.6fs fetch=%.6fs wall=%.6fs msgs=%lld engine=%.0f msg/s (纯处理)  wallRef=%.0f msg/s (含拉取/校验)\n",
+                    loadS, fetchSec, wallS, (long long)n, engineTput,
+                    wallS > 0 ? n / wallS : 0.0);
+        } else {
+            fprintf(stderr, "REPLAYSTAT load=%.6fs fetch=%.6fs replay=%.6fs msgs=%lld (%.1f msg/s 含校验)\n",
+                    loadS, fetchSec, replayS, (long long)n,
+                    replayS > 0 ? n / replayS : 0.0);
         }
-
-        fprintf(stderr, "REPLAYSTAT load=%.6fs fetch=%.6fs replay=%.6fs msgs=%lld (%.1f msg/s 纯处理%s)\n",
-                loadS, fetchSec, replayS, (long long)n,
-                replayS > 0 ? n / replayS : 0.0,
-                validate ? ", 含校验" : "");
         return n;
     } catch (const std::exception& e) {
         fprintf(stderr, "replay_ch error: %s\n", e.what());

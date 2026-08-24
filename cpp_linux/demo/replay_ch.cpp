@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <chrono>
 
 int main(int argc, char* argv[]) {
@@ -44,20 +45,24 @@ int main(int argc, char* argv[]) {
     const char* chPass = getenv("CH_PASSWORD");
     std::string user = chUser ? chUser : "default";
     std::string pass = chPass ? chPass : "";
-    auto t0 = std::chrono::high_resolution_clock::now();
+    // 引擎基准统一口径: 一律用单调时钟 steady_clock。
+    auto t0 = std::chrono::steady_clock::now();
     int64_t n = bench
         ? acmt_ob_replay_ch_bench(h, host, port, user.c_str(), pass.c_str(),
                                   date, inst, exchange)
         : acmt_ob_replay_ch_sim(h, host, port, user.c_str(), pass.c_str(),
                                 date, inst, exchange, fb ? 1 : 0, skipSod, skipSec);
-    auto t1 = std::chrono::high_resolution_clock::now();
+    auto t1 = std::chrono::steady_clock::now();
     double elapsed = std::chrono::duration<double>(t1 - t0).count();
     if (n < 0) {
         fprintf(stderr, "replay failed\n");
         acmt_ob_destroy(h);
         return 1;
     }
-    printf("replay time=%.3fs (%.2fM msg/s, %s)\n",
+    // 此处为系统端到端吞吐 (含 ClickHouse 拉取/解析/校验)。
+    // 引擎纯处理口径 (T2) 与 L1 延迟分布由 .so 在 REPLAYSTAT / LAT (stderr) 行输出,
+    // 引擎横向对比请用该行, 勿用此端到端值。
+    printf("replay time=%.3fs (%.2fM msg/s 端到端含拉取; 引擎纯处理见 stderr REPLAYSTAT, %s)\n",
            elapsed, n / elapsed / 1e6,
            bench ? "纯回放(快照只喂不校验)"
                  : (fb ? "丢单模拟(快照兜底ON)" : "含拉取+回放+校验"));

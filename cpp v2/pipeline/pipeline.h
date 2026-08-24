@@ -18,9 +18,15 @@ public:
         int orderCnt  = 0;
         int exeCnt    = 0;
         int snapCnt   = 0;
+        // T1 系统端到端吞吐 (含建线程/读文件/处理), 仅作参考口径
         double elapsedSec  = 0.0;
         double throughput   = 0.0;
-        axob::core::LatencyStats::Stats latency{};
+        // T2 引擎纯处理吞吐 (剔除 I/O, 与 Linux 基准一致): samplingCount * 1e9 / engineComputeNs
+        //   (逐条全量: samplingCount == totalMsgs, engineComputeNs == 全部 onMsg 耗时总和)
+        double throughputEngine = 0.0;
+        uint64_t engineComputeNs = 0;   // 全部 onMsg 耗时总和 (ns)
+        uint64_t samplingCount    = 0;  // 计入的真实消息条数
+        axob::core::LatencyStats::Stats latency{};   // L1 单事件处理延迟分布
         uint64_t producedTimeNs = 0;
         uint64_t consumedTimeNs = 0;
     };
