@@ -219,7 +219,7 @@ inline bool extractField(const char* lineStart, const char* lineEnd,
 }
 
 // =====================================================================
-//  [v2.8] 前向 strstr 优化
+//  [v2.6] 前向 strstr 优化
 //
 //  FieldParser 维护搜索位置，避免每次从行首搜索
 //  前提：字段在行中的顺序固定（SZSE 日志格式确实固定）

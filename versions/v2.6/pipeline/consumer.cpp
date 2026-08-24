@@ -34,7 +34,7 @@
 //  优化策略：
 //    1. 动态批次：一次取空队列（最大 MAX_BATCH），适应负载变化
 //    2. 内存预取：处理当前消息时预取下一条到 L1 缓存
-//    3. [v2.8] 延迟采样：只对 1/8 消息记录延迟（节省 ~14ns/msg）
+//    3. [v2.6] 延迟采样：只对 1/8 消息记录延迟（节省 ~14ns/msg）
 // =====================================================================
 void consumerThread(axob::core::SPSCQueue<MarketEvent>& queue, AXOB& axob,
                     axob::core::LatencyStats& latency, ConsumerStats& stats) {

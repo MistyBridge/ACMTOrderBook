@@ -85,7 +85,7 @@ void producerThread(const char* dataFile, axob::core::SPSCQueue<MarketEvent>& qu
             AxsbeSnapStock snap;
             int type = reader->next(order, exe, snap);
 
-            // [v2.7] 零拷贝优化：直接在队列槽位上构造 MarketEvent
+            // [v2.5] 零拷贝优化：直接在队列槽位上构造 MarketEvent
             MarketEvent* slot = nullptr;
             while (!(slot = queue.try_emplace_slot())) {
                 for (int i = 0; i < 64; ++i) {
@@ -106,7 +106,7 @@ void producerThread(const char* dataFile, axob::core::SPSCQueue<MarketEvent>& qu
                 slot->type = EventType::END;  // 标记为 END，消费者会忽略
             }
 
-            // [v2.8] 延迟采样：只对 1/8 消息设置时间戳
+            // [v2.6] 延迟采样：只对 1/8 消息设置时间戳
             if ((totalProduced & 7) == 0) {
                 slot->enqueueTimestamp = now_ns();
             }

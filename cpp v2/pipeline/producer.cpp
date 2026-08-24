@@ -85,7 +85,7 @@ void producerThread(const char* dataFile, axob::core::SPSCQueue<MarketEvent>& qu
             AxsbeSnapStock snap;
             int type = reader->next(order, exe, snap);
 
-            // [v2.7] 零拷贝优化：直接在队列槽位上构造 MarketEvent
+            // [v2.5] 零拷贝优化：直接在队列槽位上构造 MarketEvent
             MarketEvent* slot = nullptr;
             while (!(slot = queue.try_emplace_slot())) {
                 for (int i = 0; i < 64; ++i) {

@@ -111,7 +111,7 @@ void AXOB::onTrade(const ObExec& exec) {
         }
     }
 
-    // [v2.7] 增量更新快照统计字段（~5ns），避免完整重建
+    // [v2.5] 增量更新快照统计字段（~5ns），避免完整重建
     updateSnapStats();
 }
 

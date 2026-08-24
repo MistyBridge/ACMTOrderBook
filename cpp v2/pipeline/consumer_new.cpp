@@ -1,4 +1,4 @@
-﻿#include "consumer.h"
+#include "consumer.h"
 #include <cstdio>
 #include <chrono>
 
@@ -31,7 +31,7 @@
 // =====================================================================
 //  consumerThread
 //
-//  [v2.8] Latency sampling on every 8th messages (producer sets timestamp)
+//  [v2.6] Latency sampling on every 8th messages (producer sets timestamp)
 //  Saves ~14ns/msg (7/8 messages skip now_ns + latency.record)
 // =====================================================================
 void consumerThread(axob::core::SPSCQueue<MarketEvent>& queue, AXOB& axob,

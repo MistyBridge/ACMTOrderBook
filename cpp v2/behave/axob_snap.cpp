@@ -19,7 +19,7 @@ static inline int64_t snapPxToInter(int64_t rawPx, SecurityIDSource src) {
 void AXOB::onMsg(const AxsbeSnapStock& msg) {
     if (msg.securityID != SecurityID) return;
     if (UNLIKELY(isStaleData(msg.TransactTime))) return;
-    ensureSnap();  // [v2.7] 验证前确保快照最新
+    ensureSnap();  // [v2.5] 验证前确保快照最新
     // 套B: 市场快照镜像 (最近一帧原样保留, 秒级更新, 零维护成本)
     if (snapFallbackEnabled) {
         receivedSnapshot = msg;
@@ -34,7 +34,7 @@ void AXOB::onMsg(const AxsbeSnapStock& msg) {
 }
 
 void AXOB::onMsg(AXSignal signal) {
-    ensureSnap();  // [v2.7] 阶段切换前确保快照最新
+    ensureSnap();  // [v2.5] 阶段切换前确保快照最新
     switch (signal) {
     case AXSignal::OPENCALL_END:
         if (bidMaxPrice < askMinPrice && tradingPhase == TPM::OpenCall) {
@@ -196,17 +196,17 @@ void AXOB::onSnap(const AxsbeSnapStock& snap) {
         genSnap();
     }
 
-    // [v2.7] onSnap 修改了状态（closePxReady/tradingPhase），需要立即重建快照
+    // [v2.5] onSnap 修改了状态（closePxReady/tradingPhase），需要立即重建快照
     ensureSnap();
 }
 
-// [v2.7优化] genSnap 改为延迟标记（~2ns），不立即重建
+// [v2.5优化] genSnap 改为延迟标记（~2ns），不立即重建
 // 真正的重建由 ensureSnap() 完成
 void AXOB::genSnap() {
     snapNeedsUpdate_ = true;
 }
 
-// [v2.7] 确保快照最新 — 仅在需要时完整重建（~225ns）
+// [v2.5] 确保快照最新 — 仅在需要时完整重建（~225ns）
 void AXOB::ensureSnap() {
     if (!snapNeedsUpdate_) return;
     snapNeedsUpdate_ = false;
@@ -233,7 +233,7 @@ void AXOB::ensureSnap() {
     lastSnap = snap;
 }
 
-// [v2.7] 增量更新统计字段（~5ns，不触发完整重建）
+// [v2.5] 增量更新统计字段（~5ns，不触发完整重建）
 void AXOB::updateSnapStats() {
     lastSnap.LastPx = fmtPx(LastPx, instType, secSrc);
     lastSnap.NumTrades = NumTrades;

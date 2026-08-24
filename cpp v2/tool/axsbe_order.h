@@ -62,8 +62,8 @@ struct AxsbeOrder : public AxsbeMessageBase<AxsbeOrder> {
     }
 
     // [v2.6] 零分配版本
-    // [v2.8] 跳过 ChannelNo 解析（AXOB 不使用 Order 的 ChannelNo）
-    // [v2.8] 前向 strstr 优化：ORDER 字段顺序固定，从上次位置继续搜索
+    // [v2.6] 跳过 ChannelNo 解析（AXOB 不使用 Order 的 ChannelNo）
+    // [v2.6] 前向 strstr 优化：ORDER 字段顺序固定，从上次位置继续搜索
     void loadFromLineImpl(const char* s, const char* e) {
         int64_t value;
         FieldParser parser(s, e);
