@@ -6,14 +6,14 @@
 
 - 🎯 **定位**：单线程 / 双线程、零拷贝 mmap、SPSC 无锁队列的高性能订单簿重建引擎
 - 📊 **能力**：逐笔订单簿重建、十档快照、委托队列展示、GUI `dashboard.py` 仪表盘
-- 🚀 **性能**（深交所 000001 2022-04-22，233,875 条，T1 系统端到端实测）：Python `1,575 msg/s` → C++ v2.8 `≈1.29M msg/s`（约 **820×**）
-- 🗂 **版本管理**：`versions/` 收录 v1 → v2.8 各历史版本源码（按 commit 检出）并统一实测性能
+- 🚀 **性能**（深交所 000001 2022-04-22，233,875 条，T1 系统端到端实测）：Python `1,575 msg/s` → C++ v2.6 `≈1.29M msg/s`（约 **820×**）
+- 🗂 **版本管理**：`versions/` 收录 v1 → v2.6 各历史版本源码（按 commit 检出）并统一实测性能
 
 ---
 
 ## 核心特性
 
-- 🚀 **极致性能**：全版本演进在真实数据上实测，C++ v2.8 系统端到端 ≈`1.29M msg/s`（详见[性能测试](#性能测试)）
+- 🚀 **极致性能**：全版本演进在真实数据上实测，C++ v2.6 系统端到端 ≈`1.29M msg/s`（详见[性能测试](#性能测试)）
 - 🧵 **双线程读写分离**：SPSC 无锁队列，生产者/消费者并行处理
 - 📊 **完整能力**：逐笔订单簿重建、十档快照、委托队列展示
 - 🖥️ **GUI 仪表盘**：`dashboard.py` 对比 Python 与 C++ 版本
@@ -46,16 +46,15 @@
 | C++ v2.2 | 267,175 msg/s | 0.2 µs | 0.9 µs | 1,354.0 µs | mmap 文件预加载 + 平铺哈希 | ✅ |
 | C++ v2.3 | 853,527 msg/s | 0.2 µs | 0.8 µs | 1,442.2 µs | 直接字段解析 | ✅ |
 | C++ v2.4 | 922,082 msg/s | 0.2 µs | 0.7 µs | 1,071.5 µs | 代码质量优化 | ✅ |
-| C++ v2.7 | 1,226,486 msg/s | 0.1 µs | 0.5 µs | 1,068.2 µs | genSnap 延迟重建 | ✅ |
-| C++ v2.8 | 1,292,270 msg/s | 0.1 µs | 0.6 µs | 855.3 µs | 前向 strstr + 延迟采样 + 条件拷贝 | ✅ |
+| C++ v2.5 | 1,226,486 msg/s | 0.1 µs | 0.5 µs | 1,068.2 µs | genSnap 延迟重建 | ✅ |
+| C++ v2.6 | 1,292,270 msg/s | 0.1 µs | 0.6 µs | 855.3 µs | 前向 strstr + 延迟采样 + 条件拷贝 | ✅ |
 
 > ✅ 各版本重建的订单簿状态一致：`NumTrades=81,049  LastPx=1606  HighPx=1619  LowPx=1540  OpenPx=1564  TVol=9,212,740,800  TVal=14,684,529,579,500`。
 > ✅ 延迟按 **L1 单事件 `onMsg()`**、逐条全量计时，已统一切换为 **QPC 单调时钟**（100 ns 分辨率）；`p99.9` 亦可见于运行输出。
-> ⚠️ v2.5 / v2.6 为演进过程中描述过、但在本仓库线性历史上无独立可检出 commit 的中间态，故未列入实测表。
 
 ### 当前引擎（`cpp v2`）
 
-当前工作区版 `cpp v2` 为 v2.8 的最终形态（含 QPC L1 计时），实测 `T1 ≈1,352,950 msg/s`，`p50=0.1µs  p99=0.6µs  p99.9=1.1µs  pmax≈1037µs`。
+当前工作区版 `cpp v2` 为 v2.6 的最终形态（含 QPC L1 计时），实测 `T1 ≈1,352,950 msg/s`，`p50=0.1µs  p99=0.6µs  p99.9=1.1µs  pmax≈1037µs`。
 
 ---
 
@@ -90,13 +89,13 @@
 | `versions/v2.2` | `a4fbf49` | mmap 文件预加载 |
 | `versions/v2.3` | `ae984dd` | 直接字段解析 |
 | `versions/v2.4` | `77c40eb` | 代码质量优化 |
-| `versions/v2.7` | `0f2c9dd` | genSnap 延迟重建 |
-| `versions/v2.8` | `15cd00d` | 前向 strstr + 延迟采样 |
+| `versions/v2.5` | `0f2c9dd` | genSnap 延迟重建 |
+| `versions/v2.6` | `15cd00d` | 前向 strstr + 延迟采样 |
 
 **MinGW 兼容性说明**：这些历史版本为 MSVC 环境开发，在 MinGW 下编译需少量兼容修补（**不改动引擎逻辑**）：
 
 - `tool/field_parser.h`：为 GCC/MinGW 引入 `<cpuid.h>`，并将 `__cpuid` 替换为便携的 `__get_cpuid`（SSE4.2 检测）。
-- `core/huge_pages.h`：原文件为平台相关、未随源码提交；以 `versions/v2.7`、`versions/v2.8` 下的 `core/huge_pages.h` 桩文件提供 `allocLargePages`/`freeLargePages` 回退（返回 `nullptr`，`MemoryPool` 自动退回 `alignedAlloc`，即"大页不可用"场景）。
+- `core/huge_pages.h`：原文件为平台相关、未随源码提交；以 `versions/v2.5`、`versions/v2.6` 下的 `core/huge_pages.h` 桩文件提供 `allocLargePages`/`freeLargePages` 回退（返回 `nullptr`，`MemoryPool` 自动退回 `alignedAlloc`，即"大页不可用"场景）。
 - `tool/axsbe_base.h`（v2.4）：补充 `<cstring>`/`<cstdlib>`，供模板解析使用 `strstr`/`strncmp`/`strtoll`。
 
 ---
@@ -169,7 +168,7 @@ ACMTOrderBook/
 │   ├── src/api.cpp          ← C API (快照校验闭环 / 1s 聚合校验)
 │   ├── demo/replay_ch.cpp   ← 回放入口 (CH_USER/CH_PASSWORD)
 │   └── plot_throughput.py   ← 吞吐量曲线脚本
-├── versions/                ← 历史版本源码归档 (v1 ~ v2.8)
+├── versions/                ← 历史版本源码归档 (v1 ~ v2.6)
 ├── throughput.png           ← 版本演进实测曲线
 └── data/                    ← 测试数据 (体积大, 不入仓库, 见"数据源")
 ```
