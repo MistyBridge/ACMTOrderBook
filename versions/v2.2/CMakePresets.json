@@ -1,0 +1,96 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 21,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "default",
+            "displayName": "Default Config",
+            "description": "Default build configuration (std::unordered_map)",
+            "generator": "Visual Studio 17 2022",
+            "architecture": "x64",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "USE_FLAT_HASHMAP": "0"
+            }
+        },
+        {
+            "name": "ankerl",
+            "displayName": "Ankerl Unordered Dense",
+            "description": "Build with ankerl::unordered_dense::map (recommended)",
+            "inherits": "default",
+            "cacheVariables": {
+                "USE_FLAT_HASHMAP": "1"
+            }
+        },
+        {
+            "name": "phmap",
+            "displayName": "Phmap Flat Hash Map",
+            "description": "Build with phmap::flat_hash_map (Google abseil)",
+            "inherits": "default",
+            "cacheVariables": {
+                "USE_FLAT_HASHMAP": "2"
+            }
+        },
+        {
+            "name": "benchmark",
+            "displayName": "Benchmark Config",
+            "description": "Build with benchmark tests enabled",
+            "inherits": "default",
+            "cacheVariables": {
+                "BUILD_BENCHMARK": "ON"
+            }
+        },
+        {
+            "name": "benchmark-robin-hood",
+            "displayName": "Benchmark with Robin Hood",
+            "inherits": "benchmark",
+            "cacheVariables": {
+                "USE_ROBIN_HOOD": "ON"
+            }
+        },
+        {
+            "name": "benchmark-unordered-dense",
+            "displayName": "Benchmark with Unordered Dense",
+            "inherits": "benchmark",
+            "cacheVariables": {
+                "USE_UNORDERED_DENSE": "ON"
+            }
+        },
+        {
+            "name": "benchmark-all",
+            "displayName": "Benchmark All Hashmaps",
+            "inherits": "benchmark",
+            "cacheVariables": {
+                "USE_ROBIN_HOOD": "ON",
+                "USE_UNORDERED_DENSE": "ON"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "default",
+            "configurePreset": "default",
+            "configuration": "Release"
+        },
+        {
+            "name": "ankerl",
+            "configurePreset": "ankerl",
+            "configuration": "Release"
+        },
+        {
+            "name": "phmap",
+            "configurePreset": "phmap",
+            "configuration": "Release"
+        },
+        {
+            "name": "benchmark",
+            "configurePreset": "benchmark",
+            "configuration": "Release"
+        }
+    ]
+}
