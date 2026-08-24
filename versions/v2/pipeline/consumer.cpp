@@ -51,10 +51,11 @@ void consumerThread(axob::core::SPSCQueue<MarketEvent>& queue, AXOB& axob,
         for (size_t i = 0; i < n; ++i) {
             const MarketEvent& ev = batch[i];
 
-            // 计算延迟
-            uint64_t dequeueTime = now_ns();
-            uint64_t latencyNs = dequeueTime - ev.enqueueTimestamp;
-            latency.record(latencyNs);
+            // 逐条全量计时: L1 = 单条真实消息 onMsg() 处理耗时 (口径与当前版本一致)
+            bool isReal = (ev.type == EventType::ORDER ||
+                           ev.type == EventType::EXEC  ||
+                           ev.type == EventType::SNAP);
+            uint64_t t0msg = isReal ? now_ns() : 0;
 
             // 根据类型分发到 AXOB
             switch (ev.type) {
@@ -80,6 +81,8 @@ void consumerThread(axob::core::SPSCQueue<MarketEvent>& queue, AXOB& axob,
                 case EventType::END:
                     goto done;
             }
+
+            if (isReal) latency.record(now_ns() - t0msg);
 
             totalConsumed++;
 

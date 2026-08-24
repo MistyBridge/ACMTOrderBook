@@ -73,6 +73,12 @@ void consumerThread(axob::core::SPSCQueue<MarketEvent>& queue, AXOB& axob,
                 PREFETCH_READ(&batch[i + 1]);
             }
 
+            // 逐条全量计时: L1 = 单条真实消息 onMsg() 处理耗时 (口径与当前版本一致)
+            bool isReal = (batch[i].type == EventType::ORDER ||
+                           batch[i].type == EventType::EXEC  ||
+                           batch[i].type == EventType::SNAP);
+            uint64_t t0msg = isReal ? now_ns() : 0;
+
             // Dispatch to AXOB by type
             switch (batch[i].type) {
                 case EventType::ORDER:
@@ -99,10 +105,8 @@ void consumerThread(axob::core::SPSCQueue<MarketEvent>& queue, AXOB& axob,
                     goto done;
             }
 
-            // Latency sampling: only record when producer set timestamp
-            if (batch[i].enqueueTimestamp != 0) {
-                latency.record(now_ns() - batch[i].enqueueTimestamp);
-            }
+            // 逐条记录 onMsg 处理耗时 (L1 口径; 仅真实消息)
+            if (isReal) latency.record(now_ns() - t0msg);
 
             totalConsumed++;
 

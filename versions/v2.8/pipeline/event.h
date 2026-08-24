@@ -1,6 +1,15 @@
 #pragma once
 #include <cstdint>
 #include <chrono>
+#ifdef _WIN32
+    #ifndef WIN32_LEAN_AND_MEAN
+        #define WIN32_LEAN_AND_MEAN
+    #endif
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
+    #include <windows.h>
+#endif
 #include "../tool/axsbe_base.h"
 #include "../tool/axsbe_order.h"
 #include "../tool/axsbe_exe.h"
@@ -21,7 +30,19 @@ enum class EventType : uint8_t {
 };
 
 inline uint64_t now_ns() {
-    return std::chrono::high_resolution_clock::now().time_since_epoch().count();
+#ifdef _WIN32
+    static const uint64_t qpcFreq = []() -> uint64_t {
+        LARGE_INTEGER f; QueryPerformanceFrequency(&f);
+        return f.QuadPart > 0 ? static_cast<uint64_t>(f.QuadPart) : 1;
+    }();
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return static_cast<uint64_t>(
+        static_cast<double>(c.QuadPart) * 1e9 / static_cast<double>(qpcFreq));
+#else
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+#endif
 }
 
 struct MarketEvent {

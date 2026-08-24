@@ -43,7 +43,7 @@ public:
     //  构造函数
     //  bufferSize: 环形缓冲区容量，向上取整到 2 的幂（默认 65536）
     // ---------------------------------------------------------------
-    explicit LatencyStats(size_t bufferSize = 65536)
+    explicit LatencyStats(size_t bufferSize = (1 << 20))
         : capacity_(roundUpPow2(bufferSize))
         , mask_(capacity_ - 1)
     {
