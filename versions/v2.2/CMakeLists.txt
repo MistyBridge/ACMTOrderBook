@@ -16,10 +16,10 @@ option(BUILD_BENCHMARK "Build hashmap benchmark" ON)
 set(USE_FLAT_HASHMAP 0 CACHE STRING "Flat hashmap implementation (0=std, 1=ankerl, 2=phmap)")
 set_property(CACHE USE_FLAT_HASHMAP PROPERTY STRINGS 0 1 2)
 
-# [v2.3] mmap 文件预加载选项
+# [v2.2] mmap 文件预加载选项
 # USE_MMAP=1: 启用 mmap 文件预加载（默认，推荐）
 # USE_MMAP=0: 使用传统 ifstream 逐行读取
-option(USE_MMAP "Use mmap for file I/O (v2.3 optimization)" ON)
+option(USE_MMAP "Use mmap for file I/O (v2.2 optimization)" ON)
 
 # =====================================================================
 #  AXOrderBook v2 — 多线程订单簿撮合引擎  CMakeLists.txt
@@ -187,7 +187,7 @@ target_compile_definitions(orderbook_v2 PRIVATE
     USE_FLAT_HASHMAP=${USE_FLAT_HASHMAP}
 )
 
-# [v2.3] mmap 文件预加载宏定义
+# [v2.2] mmap 文件预加载宏定义
 if(USE_MMAP)
     target_compile_definitions(orderbook_v2 PRIVATE USE_MMAP=1)
 else()

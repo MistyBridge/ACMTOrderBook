@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
-#include <cstring>   // memcmp, strncmp [v2.6]
-#include <cstdlib>   // strtoll [v2.6]
+#include <cstring>   // memcmp, strncmp [v2.5]
+#include <cstdlib>   // strtoll [v2.5]
 #include <string>
 
 // ==================== 交易所代码 ====================
@@ -46,14 +46,14 @@ public:
         static_cast<Derived*>(this)->loadFromLineImpl(line);
     }
 
-    // [v2.6] 零分配版本 — 接受 (ptr, end) 对，避免 std::string 分配
+    // [v2.5] 零分配版本 — 接受 (ptr, end) 对，避免 std::string 分配
     void loadFromLine(const char* lineStart, const char* lineEnd) {
         loadFromLineCommon(lineStart, lineEnd);
         static_cast<Derived*>(this)->loadFromLineImpl(lineStart, lineEnd);
     }
 
 protected:
-    // [v2.6] 零分配版通用解析（内联，避免循环依赖 field_parser.h）
+    // [v2.5] 零分配版通用解析（内联，避免循环依赖 field_parser.h）
     // 手动整数解析，不修改源内存（mmap 只读安全）
     void loadFromLineCommon(const char* lineStart, const char* lineEnd) {
         // SecurityIDSource 解析

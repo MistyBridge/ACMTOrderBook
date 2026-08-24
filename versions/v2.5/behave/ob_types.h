@@ -237,7 +237,7 @@ inline int32_t clipInt32(int64_t x) {
 
 #include <map>  // std::map 用于大 n 回退
 
-// [v2.6] 热点路径性能计数器（编译时可通过 #define DISABLE_PROFILING 关闭）
+// [v2.5] 热点路径性能计数器（编译时可通过 #define DISABLE_PROFILING 关闭）
 #define DISABLE_PROFILING  // 移除 profiling 开销以获得最佳性能
 #ifndef DISABLE_PROFILING
 struct HotPathStats {
@@ -309,7 +309,7 @@ struct HybridLevelBook {
     // ================================================================
     //  find() — 查找指定价格的档位（模式无关）
     // ================================================================
-    // [v2.6] 二分查找优化：O(n) → O(log n)
+    // [v2.5] 二分查找优化：O(n) → O(log n)
     LevelNode* find(int32_t price) {
         if (LIKELY(!useMap)) {
             int lo = 0, hi = count - 1;
@@ -325,7 +325,7 @@ struct HybridLevelBook {
             return (it != treeLevels.end()) ? &it->second : nullptr;
         }
     }
-    // [v2.6] 二分查找优化（const 版本）
+    // [v2.5] 二分查找优化（const 版本）
     const LevelNode* find(int32_t price) const {
         if (LIKELY(!useMap)) {
             int lo = 0, hi = count - 1;

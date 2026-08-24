@@ -1,11 +1,11 @@
 #include "producer.h"
 #include "../tool/msg_util.h"
-#include "../tool/mmap_file.h"  // [v2.3] mmap 文件读取器
+#include "../tool/mmap_file.h"  // [v2.2] mmap 文件读取器
 #include <cstdio>
 #include <chrono>
 #include <atomic>
 
-// [v2.3] mmap 模式开关
+// [v2.2] mmap 模式开关
 // 定义 USE_MMAP 启用 mmap 文件预加载，否则使用传统 ifstream
 #ifndef USE_MMAP
 #define USE_MMAP 1
@@ -48,7 +48,7 @@ void producerThread(const char* dataFile, axob::core::SPSCQueue<MarketEvent>& qu
             fflush(stdout);
         }
 
-        // [v2.3] 根据编译选项选择文件读取器
+        // [v2.2] 根据编译选项选择文件读取器
 #if USE_MMAP
         // mmap 模式：预加载整个文件到内存，消除 I/O 瓶颈
         auto* reader = new MmapFileReader(std::string(dataFile));

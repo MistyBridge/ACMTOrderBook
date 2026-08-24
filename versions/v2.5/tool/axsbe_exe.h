@@ -58,7 +58,7 @@ struct AxsbeExe : public AxsbeMessageBase<AxsbeExe> {
             TransactTime = static_cast<uint64_t>(value);
     }
 
-    // [v2.6] 零分配版本
+    // [v2.5] 零分配版本
     void loadFromLineImpl(const char* s, const char* e) {
         int64_t value;
         if (extractField(s, e, "ChannelNo", value))        ChannelNo = static_cast<uint16_t>(value);

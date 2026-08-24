@@ -185,13 +185,13 @@ inline bool parseSecurityFields(const char* line,
 }
 
 // =====================================================================
-//  [v2.6] 零分配版本 — 接受 (ptr, end) 对，无需 null-terminated 字符串
+//  [v2.5] 零分配版本 — 接受 (ptr, end) 对，无需 null-terminated 字符串
 //
 //  避免 MmapFileReader::advance() 中每个消息的 std::string 分配
 //  节省 ~200-500ns/消息（取决于行长度）
 // =====================================================================
 
-// [v2.6] 手动整数解析，不修改源内存（mmap 只读安全）
+// [v2.5] 手动整数解析，不修改源内存（mmap 只读安全）
 inline bool parseI64(const char* s, const char* end, int64_t& out) {
     if (s >= end) return false;
     bool neg = false;
@@ -220,7 +220,7 @@ inline bool extractField(const char* lineStart, const char* lineEnd,
     return parseI64(pos + 1, lineEnd, out);
 }
 
-// [v2.6] 零分配版 parseSecurityFields
+// [v2.5] 零分配版 parseSecurityFields
 inline bool parseSecurityFields(const char* lineStart, const char* lineEnd,
                                 SecurityIDSource& secSrc, int& securityID) {
     int64_t value;

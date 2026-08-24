@@ -244,7 +244,7 @@ private:
     AxsbeSnapStock currentSnap_;
 
     // 解析下一行
-    // [v2.6] 零分配优化：直接使用 mmap 指针对 (lineStart, lineEnd)
+    // [v2.5] 零分配优化：直接使用 mmap 指针对 (lineStart, lineEnd)
     // 消除每条消息的 std::string 分配（~200-500ns/消息）
     void advance() {
         hasNext_ = false;
@@ -272,7 +272,7 @@ private:
                 continue;
             }
 
-            // [v2.6] 直接使用指针对解析，无需创建 std::string
+            // [v2.5] 直接使用指针对解析，无需创建 std::string
             int64_t msgType = 0;
             if (!extractField(lineStart, lineEnd, "MsgType", msgType)) {
                 continue;

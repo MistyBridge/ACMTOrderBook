@@ -3,7 +3,7 @@
 #include "msg_util.h"
 
 // ---- parseKeyValueLine ----
-// [v2.3优化] 直接解析整数，避免临时 string 分配
+// [v2.2优化] 直接解析整数，避免临时 string 分配
 // - key：仍需创建 string（map 键类型要求）
 // - value：直接在原地解析整数，不创建临时 string
 static inline int64_t parseIntFast(const char* data, size_t len) {
