@@ -3,6 +3,7 @@
 #include <cassert>
 
 void AXOB::onMsg(const AxsbeExe& msg) {
+    autoInitFromMsg(msg.secSrc, msg.securityID);
     if (UNLIKELY(msg.securityID != SecurityID)) return;
     if (UNLIKELY(isStaleData(msg.TransactTime))) return;
     // [v2优化] CYB 收盘集合竞价进入是罕见路径
@@ -62,11 +63,9 @@ void AXOB::onTrade(const ObExec& exec) {
     NumTrades++;
     TotalVolumeTrade += exec.LastQty;
 
-    // 成交额累加 (统一定点 ×10^5, 与交易所/品种无关)。
-    // 精度对齐交易所原生 (深: 价×10^4/量×10^2, 沪: 价×10^3/量×10^3), 金额 = 价格×数量,
-    // 乘积精度 ×10^6 (深/沪皆然), 除以 per-exchange 因子落到交易所金额精度 (深 ÷100 / 沪 ÷10)。
-    // 乘积上限 ≈ 单笔金额×10^6, 对境内真实单笔 (≈1e11 元) 仅 1e17, 远低于 int64 上限 9.22e18,
-    // 因此用 int64, 无需 __int128。
+    // 成交额累加: 内部价格统一 ×10^6 (官方), 数量原生 (深 ×10^2/沪 ×10^3),
+    // 金额 = 价格×数量, 乘积精度 ×10^8(深)/×10^9(沪), 除以因子落到交易所金额精度 (均 ÷10^4)。
+    // 乘积上限 ≈ 单笔金额×10^8, 官方数据实测 (000001/300750) TVal 用 int64 不溢出, 无需 __int128。
     TotalValueTrade += amtFromProd(exec.LastPx, exec.LastQty, secSrc);
 
     LastPx = exec.LastPx;

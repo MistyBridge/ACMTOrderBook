@@ -6,18 +6,18 @@
 
 // ---- 精度换算 (axsbe_base.h) ----
 TEST(ObTypes, PrecisionConversion) {
-    // qty: 深市 2 位小数(×100) -> 内部 ×10^5 : 乘 SZSE_QTY_MUL(=×1000)
+    // qty: 深市原生 ×100 (2 位小数), SZSE_QTY_MUL=1 (恒等)
     EXPECT_EQ(qtySnap2Inter(100, SecurityIDSource_SZSE), 100 * SZSE_QTY_MUL);
-    // 沪市 3 位小数(×1000) -> 内部 ×10^5 : 乘 SSE_QTY_MUL(=×100)
+    // 沪市原生 ×1000 (3 位小数), SSE_QTY_MUL=1 (恒等)
     EXPECT_EQ(qtySnap2Inter(100, SecurityIDSource_SSE), 100 * SSE_QTY_MUL);
     // 反向
     EXPECT_EQ(qtyInter2Snap(100 * SZSE_QTY_MUL, SecurityIDSource_SZSE), 100);
-    // 深市成交额：内部 ×10^5 -> 原始 ×10^4 (除 10)
+    // 金额: 内部金额 == 交易所金额精度 (÷1)
     EXPECT_EQ(amtInter2Snap(100000, SecurityIDSource_SZSE), 100000 / SZSE_AMT_DIV);
 }
 
 TEST(ObTypes, FormatPriceInterToSnap) {
-    // 内部精度 == 交易所原生 (深×10^4 / 沪×10^3), mul=1, fmt 为恒等。
+    // 内部价格统一 ×10^6 (官方快照), fmt 输出与内部同尺度 → 恒等。
     EXPECT_EQ(fmtPriceInter2Snap(105400, InstrumentType::STOCK, SecurityIDSource_SZSE), 105400);
     EXPECT_EQ(fmtPriceInter2Snap(10540, InstrumentType::STOCK, SecurityIDSource_SSE), 10540);
 }

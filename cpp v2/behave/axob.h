@@ -67,12 +67,13 @@ public:
     int              SecurityID;
     SecurityIDSource secSrc;
     InstrumentType   instType;
+    bool             autoInit_ = true;   // 构造未指定标的时，首条消息自动识别
 
     // [v2优化] 热字段集中到结构体开头，确保它们在同一个或相邻 cache line
     // 这些字段在每条消息处理中都会被读写
 
     // ==================== 最优档缓存（最高频读写）====================
-    int64_t bidMaxPrice = 0;   // 内部 ×10^5
+    int64_t bidMaxPrice = 0;   // 内部 ×10^6
     int64_t askMinPrice = 0;
     int64_t bidMaxQty = 0;
     int64_t askMinQty = 0;
@@ -81,7 +82,7 @@ public:
     int64_t NumTrades         = 0;
     int64_t TotalVolumeTrade  = 0;
     int64_t TotalValueTrade   = 0;
-    int64_t LastPx            = 0;   // 内部 ×10^5
+    int64_t LastPx            = 0;   // 内部 ×10^6
     int64_t HighPx            = 0;
     int64_t LowPx             = 0;
     int64_t OpenPx            = 0;
@@ -105,9 +106,9 @@ public:
 #endif
 
     // ==================== 加权统计 ====================
-    // *Value 为全簿 Σ(price × qty) 累计和 (产品精度 ×10^6, 即 价格×数量乘积精度)。
-    // 内部精度对齐交易所原生 (深: 价×10^4/量×10^2, 沪: 价×10^3/量×10^3), 乘积精度 ×10^6,
-    // 对境内任何真实订单簿均远低于 int64 上限, 故用 int64, 无需 __int128。
+    // *Value 为全簿 Σ(price × qty) 累计和 (产品精度 ×10^8/×10^9, 即 价格×数量乘积精度)。
+    // 内部价格统一 ×10^6 (官方快照), 数量为原生 (深 ×10^2/沪 ×10^3), 乘积精度 ×10^8(深)/×10^9(沪)。
+    // 对境内任何真实订单簿均远低于 int64 上限 (official data 实测不溢出), 故用 int64, 无需 __int128。
     // *Size 为纯数量累计, int64 足够。
     int64_t  BidWeightSize    = 0;
     int64_t  BidWeightValue   = 0;
@@ -211,6 +212,10 @@ public:
     AXOB(int securityID, SecurityIDSource src, InstrumentType type);
 #endif
     ~AXOB();
+
+    // 若构造时未指定标的 (securityID==0)，由首条消息自动识别 securityID/secSrc/品种
+    // (引擎通用: 任一同标的单文件数据均可处理, 不必写死 securityID)
+    void autoInitFromMsg(SecurityIDSource src, int securityID);
 
     // ==================== 消息入口（重载分发）====================
     void onMsg(const AxsbeOrder& msg);

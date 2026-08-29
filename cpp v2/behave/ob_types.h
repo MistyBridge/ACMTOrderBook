@@ -67,13 +67,13 @@ inline MarketSubType marketSubType(SecurityIDSource src, int securityID) {
 
 // ---- 市场常量（由第一条快照初始化）----
 // 注意两种精度域并存: *Px 为快照原始精度 (深 ×10^4 / 沪 ×10^3, 原样保留供快照回吐);
-//                     *Price 与 PrevClosePx 为内部精度 (×10^5, 参与簿内比较运算)。
+//                     *Price 与 PrevClosePx 为内部精度 (×10^6, 参与簿内比较运算)。
 struct MarketInfo {
-    int64_t  PrevClosePx   = 0;   // 内部 ×10^5
+    int64_t  PrevClosePx   = 0;   // 内部 ×10^6
     int32_t  UpLimitPx     = 0;   // 原始精度
     int32_t  DnLimitPx     = 0;   // 原始精度
-    int64_t  UpLimitPrice  = 0;   // 内部 ×10^5
-    int64_t  DnLimitPrice  = 0;   // 内部 ×10^5
+    int64_t  UpLimitPrice  = 0;   // 内部 ×10^6
+    int64_t  DnLimitPrice  = 0;   // 内部 ×10^6
     uint16_t ChannelNo     = 0;
     uint64_t YYMMDD        = 0;
 };
@@ -87,8 +87,8 @@ struct ObOrder {
     uint64_t applSeqNum;       // 8B  offset=0
     uint64_t TransactTime = 0; // 8B  offset=8
     uint64_t bizIndex = 0;     // 8B  offset=16 上交所: 业务序号 (成交门控: trade.biz > order.biz 才削减主动侧)
-    int64_t  qty;              // 8B  offset=24 (内部 ×10^5, 单档可超 21 亿股, 必须 int64)
-    int64_t  price;            // 8B  offset=32 (内部 ×10^5, int32 上限 21474.83 元不够)
+    int64_t  qty;              // 8B  offset=24 (内部 ×10^6, 单档可超 21 亿股, 必须 int64)
+    int64_t  price;            // 8B  offset=32 (内部 ×10^6, int32 上限 21474.83 元不够)
     Side     side;             // 1B  offset=40
     OrdType  type;             // 1B  offset=41
     bool     traded = false;   // 1B  offset=42
@@ -104,7 +104,7 @@ struct ObOrder {
         if (UNLIKELY(raw.Price == ORDER_PRICE_OVERFLOW)) {
             price = PRICE_MAXIMUM;
         } else {
-            // 精度转换: 原始 → 内部 ×10^5 (乘法, 无截断)。
+            // 精度转换: 原始 → 内部 ×10^6 (乘法, 无截断)。
             // 统一定点后与品种 (股票/基金/可转债) 无关, 仅交易所原始精度不同。
             price = (LIKELY(raw.secSrc == SecurityIDSource_SZSE))
                         ? raw.Price * SZSE_PRICE_MUL
@@ -129,8 +129,8 @@ struct ObExec {
     uint64_t BidApplSeqNum;       // 8B offset=0
     uint64_t OfferApplSeqNum;     // 8B offset=8
     uint64_t TransactTime;        // 8B offset=16
-    int64_t  LastPx;              // 8B offset=24 (内部 ×10^5)
-    int64_t  LastQty;             // 8B offset=32 (内部 ×10^5, 单笔可超 21 亿股, 必须 int64)
+    int64_t  LastPx;              // 8B offset=24 (内部 ×10^6)
+    int64_t  LastQty;             // 8B offset=32 (内部 ×10^6, 单笔可超 21 亿股, 必须 int64)
     TPM      tradingPhaseMarket;  // 1B offset=40
     // 7B pad → uint64 BizIndex offset=48 → 56B total
 
@@ -144,7 +144,7 @@ struct ObExec {
           BizIndex(raw.BizIndex),
           tradingPhaseMarket(TPM::Unknown)
     {
-        // 精度转换: 原始 → 内部 ×10^5 (乘法, 与品种无关)
+        // 精度转换: 原始 → 内部 ×10^6 (乘法, 与品种无关)
         LastPx = (LIKELY(raw.secSrc == SecurityIDSource_SZSE))
                      ? raw.LastPx * SZSE_PRICE_MUL
                      : ((raw.secSrc == SecurityIDSource_SSE)
@@ -158,8 +158,8 @@ struct ObExec {
 struct ObCancel {
     uint64_t applSeqNum;      // 8B offset=0
     uint64_t TransactTime;    // 8B offset=8
-    int64_t  qty;             // 8B offset=16 (内部 ×10^5)
-    int64_t  price;           // 8B offset=24 (内部 ×10^5)
+    int64_t  qty;             // 8B offset=16 (内部 ×10^6)
+    int64_t  price;           // 8B offset=24 (内部 ×10^6)
     Side     side;            // 1B offset=32 → pad(7) → 40B total
 };
 
@@ -491,10 +491,10 @@ static_assert(std::is_trivially_copyable_v<ObExec>,
 static_assert(std::is_trivially_copyable_v<LevelNode>,
               "LevelNode must be trivially copyable");
 
-// [v2优化] 结构体大小约束。统一定点 ×10^5 后 price 升 int64:
+// [v2优化] 结构体大小约束。统一定点 ×10^6 后 price 升 int64:
 // ObOrder 40B → 48B (换取价格无溢出上限 + 消除品种精度特例)。
 static_assert(sizeof(ObOrder) <= 48,
-              "ObOrder should fit in 48B (int64 price for ×10^5 fixed point)");
+              "ObOrder should fit in 48B (int64 price for ×10^6 fixed point)");
 static_assert(sizeof(LevelNode) == 16,
               "LevelNode should be exactly 16B (int64 price + int64 qty)");
 // 注意：HybridLevelBook 包含 std::map，不能 trivially copy

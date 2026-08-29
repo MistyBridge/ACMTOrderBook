@@ -1,7 +1,7 @@
 #include "axob.h"
 #include <cstdio>
 #include <cmath>
-#include <cstdlib>   // std::llabs (内部 ×10^5 定点差值需 64 位绝对值)
+#include <cstdlib>   // std::llabs (内部 ×10^6 定点差值需 64 位绝对值)
 #include <map>
 
 static int32_t fmtPx(int64_t price, InstrumentType instType, SecurityIDSource src) {
@@ -17,6 +17,7 @@ static inline int64_t snapPxToInter(int64_t rawPx, SecurityIDSource src) {
 
 // 消息入口
 void AXOB::onMsg(const AxsbeSnapStock& msg) {
+    autoInitFromMsg(msg.secSrc, msg.securityID);
     if (msg.securityID != SecurityID) return;
     if (UNLIKELY(isStaleData(msg.TransactTime))) return;
     ensureSnap();  // [v2.5] 验证前确保快照最新
@@ -183,7 +184,7 @@ void AXOB::onSnap(const AxsbeSnapStock& snap) {
 
     initMktInfoFromSnap(snap);
 
-    // 收盘价补充 (官方收盘价来自快照, 换算为内部 ×10^5)
+    // 收盘价补充 (官方收盘价来自快照, 换算为内部 ×10^6)
     if (tradingPhase == TPM::Ending && !closePxReady) {
         LastPx = snapPxToInter(snap.LastPx, secSrc);
         closePxReady = true;
@@ -254,7 +255,7 @@ AxsbeSnapStock AXOB::genCallSnap(int showLevelNb) {
     int64_t _ask_q = askMinQty;
 
     // 初始撮合价
-    int64_t price = 0;      // 内部 ×10^5
+    int64_t price = 0;      // 内部 ×10^6
     if (_bid_q == 0 && _ask_q == 0)      price = 0;
     else if (_bid_q == 0)                 price = _ask_p;
     else if (_ask_q == 0)                 price = _bid_p;
@@ -280,7 +281,7 @@ AxsbeSnapStock AXOB::genCallSnap(int showLevelNb) {
 
             if (bidQty == 0 && askQty == 0) {
                 if (_bid_p >= refPx && _ask_p <= refPx) price = refPx;
-                // 必须用 std::llabs: 内部 ×10^5 下差值远超 int32,
+                // 必须用 std::llabs: 内部 ×10^6 下差值远超 int32,
                 // 无限定的 abs() 可能选中 int 重载而截断高位。
                 else if (std::llabs(_bid_p - refPx) < std::llabs(_ask_p - refPx)) price = _bid_p;
                 else price = _ask_p;
@@ -336,7 +337,7 @@ AxsbeSnapStock AXOB::genCallSnap(int showLevelNb) {
     if (volumeTrade == 0) {
         for (int i = 0; i < showLevelNb; i++) { snap.bid[i] = PriceLevel(0,0); snap.ask[i] = PriceLevel(0,0); }
     } else {
-        // 量: 内部 ×10^5 → 快照原始精度
+        // 量: 内部 ×10^6 → 快照原始精度
         snap.bid[0] = PriceLevel(snapPrice, qtyInter2Snap(volumeTrade, secSrc));
         snap.ask[0] = PriceLevel(snapPrice, qtyInter2Snap(volumeTrade, secSrc));
         snap.bid[1] = PriceLevel(0, qtyInter2Snap(bidQty, secSrc));
@@ -345,7 +346,7 @@ AxsbeSnapStock AXOB::genCallSnap(int showLevelNb) {
     }
 
     snap.NumTrades        = NumTrades;
-    // 内部 ×10^5 → 快照原始精度 (量: 深 ÷1000 沪 ÷100; 额: 深 ÷10 沪 ÷1)
+    // 内部 ×10^6 → 快照原始精度 (量/额 均为原生, 恒等 ÷1)
     snap.TotalVolumeTrade = qtyInter2Snap(TotalVolumeTrade, secSrc);
     snap.TotalValueTrade  = amtInter2Snap(TotalValueTrade, secSrc);
     // 集合竞价快照的 LastPx 为虚拟撮合价 (交易所约定; 无法撮合时为 0)。
@@ -395,7 +396,7 @@ AxsbeSnapStock AXOB::genTradingSnap(bool isVolBreaking, int levelNb) {
 
     setSnapFixParam(snap);
     snap.NumTrades        = NumTrades;
-    // 内部 ×10^5 → 快照原始精度 (量: 深 ÷1000 沪 ÷100; 额: 深 ÷10 沪 ÷1)
+    // 内部 ×10^6 → 快照原始精度 (量/额 均为原生, 恒等 ÷1)
     snap.TotalVolumeTrade = qtyInter2Snap(TotalVolumeTrade, secSrc);
     snap.TotalValueTrade  = amtInter2Snap(TotalValueTrade, secSrc);
     snap.LastPx = fmtPx(LastPx, instType, secSrc);

@@ -43,6 +43,18 @@ AXOB::AXOB(int securityID, SecurityIDSource src, InstrumentType type)
 }
 #endif
 
+// 构造未指定标的 (securityID==0) 时，由首条消息自动识别 (引擎通用)。
+void AXOB::autoInitFromMsg(SecurityIDSource src, int securityID) {
+    if (!autoInit_) return;      // 已初始化
+    autoInit_ = false;
+    secSrc = src;
+    SecurityID = securityID;
+    instType = InstrumentType::STOCK;   // A 股默认 (单文件数据)
+    mktSubType = marketSubType(secSrc, SecurityID);
+    cageType = (mktSubType == MarketSubType::SZSE_STK_GEM)
+               ? CageType::CYB : CageType::NONE;
+}
+
 // [v2优化] 析构函数：释放 orderMap 中所有堆分配的 ObOrder
 AXOB::~AXOB() {
     // 释放 orderMap 中的 ObOrder*
@@ -130,7 +142,7 @@ void AXOB::setSnapFixParam(AxsbeSnapStock& snap) {
     snap.UpLimitPx  = mktInfo.UpLimitPx;
     snap.DnLimitPx  = mktInfo.DnLimitPx;
 
-    // 内部 ×10^5 → 快照原始精度 (统一定点后与品种无关)
+    // 内部 ×10^6 → 快照原始精度 (统一定点后与品种无关)
     if (secSrc == SecurityIDSource_SZSE)
         snap.PrevClosePx = clipInt32(mktInfo.PrevClosePx / SZSE_PRICE_MUL);
 }

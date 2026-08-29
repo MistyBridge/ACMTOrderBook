@@ -7,6 +7,8 @@
 
 // ---- 消息入口：逐笔委托 ----
 void AXOB::onMsg(const AxsbeOrder& msg) {
+    // [v2.7] 构造未指定标的时，由首条消息自动识别 securityID/secSrc
+    autoInitFromMsg(msg.secSrc, msg.securityID);
     // [v2优化] securityID 不匹配是罕见情况（文件只含单个股票时不会发生）
     if (UNLIKELY(msg.securityID != SecurityID)) return;
     if (UNLIKELY(isStaleData(msg.TransactTime))) return;

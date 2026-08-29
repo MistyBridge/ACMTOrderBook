@@ -65,8 +65,8 @@ void Pipeline::run() {
     // 创建 SPSC 队列
     axob::core::SPSCQueue<MarketEvent> queue(queueCapacity_);
 
-    // 创建 AXOB 实例（与 v1 一致）
-    AXOB axob(1, SecurityIDSource_SZSE, InstrumentType::STOCK);
+    // 创建 AXOB 实例 — 以 0/未知 起，由首条消息自动识别 securityID/secSrc (引擎通用)
+    AXOB axob(0, SecurityIDSource_NULL, InstrumentType::UNKNOWN);
 
     // 创建延迟统计器
     axob::core::LatencyStats latency;
@@ -142,7 +142,7 @@ void Pipeline::run() {
     printf("\nOrderBook State:\n%s\n", axob.toString().c_str());
 
     auto [askLevels, bidLevels] = axob.getLevels(5);
-    printf("\n--- 5 Level OrderBook (internal ×10^5) ---\n");
+    printf("\n--- 5 Level OrderBook (internal ×10^6) ---\n");
     for (int i = 4; i >= 0; i--) {
         auto it = askLevels.find(i);
         if (it != askLevels.end() && it->second.qty > 0)
