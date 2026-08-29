@@ -8,10 +8,10 @@ static int32_t fmtPx(int64_t price, InstrumentType instType, SecurityIDSource sr
     return fmtPriceInter2Snap(price, instType, src);
 }
 
-// 快照原始精度 → 内部 ×10^5 (乘法; 统一定点后与品种无关)
+// 快照主流价格 (×10^6, 官方) → 内部 ×10^6 (同尺度, ×1)。
 static inline int64_t snapPxToInter(int64_t rawPx, SecurityIDSource src) {
-    if (src == SecurityIDSource_SZSE) return rawPx * SZSE_PRICE_MUL;
-    if (src == SecurityIDSource_SSE)  return rawPx * SSE_PRICE_MUL;
+    if (src == SecurityIDSource_SZSE) return rawPx * SZSE_SNAP_PRICE_MUL;
+    if (src == SecurityIDSource_SSE)  return rawPx * SSE_SNAP_PRICE_MUL;
     return rawPx;
 }
 
@@ -89,9 +89,10 @@ void AXOB::initMktInfoFromSnap(const AxsbeSnapStock& snap) {
     mktInfo.UpLimitPx    = snap.UpLimitPx;
     mktInfo.DnLimitPx    = snap.DnLimitPx;
 
-    // 统一定点 ×10^5: 品种 (股票/基金/可转债) 不再分叉, 仅交易所原始精度不同。
-    // 涨跌停内部价保留原始精度域的 *Px 供快照回吐, *Price 供簿内比较。
-    mktInfo.PrevClosePx  = snapPxToInter(snap.PrevClosePx, secSrc);
+    // 快照 PrevClosePx 在数据里是 ×10^4 (与主流价格 ×10^6 不同), 故深市需 ×100 升到 ×10^6。
+    mktInfo.PrevClosePx  = (secSrc == SecurityIDSource_SZSE)
+                               ? snap.PrevClosePx * SZSE_PRECLOSE_MUL
+                               : snapPxToInter(snap.PrevClosePx, secSrc);
     bidCageRefPx = mktInfo.PrevClosePx;
     askCageRefPx = mktInfo.PrevClosePx;
 

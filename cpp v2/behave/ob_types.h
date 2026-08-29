@@ -174,15 +174,12 @@ struct LevelNode {
 };
 
 // ---- 工具函数 ----
-// 内部价 (×10^5) → 快照原始精度 (深 ×10^4 / 沪 ×10^3)。
-// 统一定点后与品种无关: 内部精度已高于各交易所原始精度, 一律为除。
+// 内部价 (×10^6，对齐官方快照) → 快照原始精度 (深/沪 均 ×10^6)。
+// 官方快照主流价格即 ×10^6，内部==快照，故 ÷1 (恒等)。
 inline int32_t fmtPriceInter2Snap(int64_t price, [[maybe_unused]] InstrumentType instType,
                                   SecurityIDSource src) {
-    if (src == SecurityIDSource_SZSE)
-        return static_cast<int32_t>(price / SZSE_PRICE_MUL);
-    if (src == SecurityIDSource_SSE)
-        return static_cast<int32_t>(price / SSE_PRICE_MUL);
-    return static_cast<int32_t>(price);
+    (void)src;
+    return static_cast<int32_t>(price / 1);
 }
 
 inline int32_t clipInt32(int64_t x) {

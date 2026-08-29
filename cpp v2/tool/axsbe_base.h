@@ -240,30 +240,32 @@ enum class ExecType : uint8_t {
 };
 
 // ==================== 原始数据精度 ====================
-constexpr int PRICE_SZSE_INCR_PRECISION  = 10000;
-// 快照价格精度 ×10^4（与 py 引擎及 AX-SBE 历史文件一致；A股价格范围 int32 足够，无需 ×10^6）
-constexpr int PRICE_SZSE_SNAP_PRECISION  = 10000;
-constexpr int PRICE_SSE_PRECISION        = 1000;
+constexpr int PRICE_SZSE_INCR_PRECISION  = 10000;    // 逐笔价格 ×10^4 (深)
+constexpr int PRICE_SZSE_SNAP_PRECISION  = 1000000;  // 快照主流价格 ×10^6 (官方)
+constexpr int PRICE_SSE_PRECISION        = 1000;     // 逐笔价格 ×10^3 (沪)
 
-// ==================== 内部计算精度 ====================
-// 内部精度直接对齐交易所原生精度（不做人为统一缩放）：
-//   深市: 价格 ×10^4, 数量 ×10^2, 金额 ×10^4
-//   沪市: 价格 ×10^3, 数量 ×10^3, 金额 ×10^5
-// 内部值 == 原始值（mul=1，零换算、零精度损失），且不再需要 __int128：
-//   金额 = 价格×数量, 乘积精度 = 深 ×10^6 / 沪 ×10^6 (远低于 int64 上限)。
-constexpr int64_t SZSE_PRICE_MUL = 1;   // 价格内部 == 原始 (深 ×10^4)
-constexpr int64_t SSE_PRICE_MUL  = 1;   // 价格内部 == 原始 (沪 ×10^3)
-constexpr int64_t SZSE_QTY_MUL   = 1;   // 数量内部 == 原始 (深 ×10^2)
-constexpr int64_t SSE_QTY_MUL    = 1;   // 数量内部 == 原始 (沪 ×10^3)
-// 金额: 内部金额精度 == 交易所金额精度, 故 快照回吐 ÷1。
+// ==================== 内部计算精度 (主流价格统一 ×10^6, 对齐官方快照) ====================
+// 官方标准 (实测 AX-SBE): 快照(111)主流价格 LastPx/OpenPx/HighPx/LowPx/档位 = ×10^6,
+//   但快照 PrevClosePx = ×10^4;  逐笔(192/191)价格 = ×10^4(深)/×10^3(沪)。
+// 内部主流价格统一 ×10^6 (对齐官方快照); 逐笔换算升档 (深 ×100 / 沪 ×1000); 快照读取 ×1。
+constexpr int64_t SZSE_PRICE_MUL = 100;    // 逐笔 深 ×10^4 → 内部 ×10^6
+constexpr int64_t SSE_PRICE_MUL  = 1000;   // 逐笔 沪 ×10^3 → 内部 ×10^6
+constexpr int64_t SZSE_QTY_MUL   = 1;      // 数量 == 原生 (深 ×10^2)
+constexpr int64_t SSE_QTY_MUL    = 1;      // 数量 == 原生 (沪 ×10^3)
+// 快照主流价格已是 ×10^6 (官方), 与内部同尺度: 读取 ×1, 回吐 ÷1。
+constexpr int64_t SZSE_SNAP_PRICE_MUL = 1;
+constexpr int64_t SSE_SNAP_PRICE_MUL  = 1;
+constexpr int64_t SZSE_SNAP_PRICE_DIV = 1;
+constexpr int64_t SSE_SNAP_PRICE_DIV  = 1;
+// 金额: 内部金额 == 交易所金额精度 (深 ×10^4 / 沪 ×10^5), 快照回吐 ÷1。
 constexpr int64_t SZSE_AMT_DIV = 1;
 constexpr int64_t SSE_AMT_DIV  = 1;
-// 金额 = 价格×数量; 乘积精度 = ×10^4×10^2 = ×10^6 (深) / ×10^3×10^3 = ×10^6 (沪)。
-// 落到交易所金额精度 (深 ×10^4 / 沪 ×10^5) 所需除数:
-constexpr int64_t SZSE_AMT_FROM_PROD = 100;   // 10^6 / 10^4
-constexpr int64_t SSE_AMT_FROM_PROD  = 10;    // 10^6 / 10^5
-// 产品精度 (价格×数量), 用于加权值换算与溢出上限表达 (全 int64, 无 __int128)。
-constexpr int64_t PROD_PRECISION = 1000000;   // 10^6
+// 金额 = 价格(×10^6) × 数量(×10^2/×10^3): 积 = 深 ×10^8 / 沪 ×10^9。
+// 落到交易所金额精度 (深 ×10^4 / 沪 ×10^5): 均 ÷10^4。
+constexpr int64_t SZSE_AMT_FROM_PROD = 10000;   // 10^8 / 10^4
+constexpr int64_t SSE_AMT_FROM_PROD  = 10000;   // 10^9 / 10^5
+// 产品精度 (价格×数量积), 用于加权值换算。
+constexpr int64_t PROD_PRECISION = 100000000;   // 10^8
 
 // ==================== 价格溢出 ====================
 constexpr int64_t ORDER_PRICE_OVERFLOW = 0x7FFFFFFF;   // 原始价格越界标记 (原始精度域)
@@ -273,7 +275,10 @@ constexpr int64_t PRICE_MAXIMUM = INT64_MAX;           // 本地越界上限 (�
 constexpr int CYB_ORDER_ENVALUE_MAX_RATE = 9;
 
 // ==================== 其他精度常量 ====================
-constexpr int PRICE_SZSE_SNAP_PRECLOSE_PRECISION = 10000;
+// 快照 PrevClosePx 在数据里是 ×10^4 (与主流价格 ×10^6 不同), 故昨收换算需 ×100。
+constexpr int PRICE_SZSE_SNAP_PRECLOSE_PRECISION = 10000;   // 快照昨收 ×10^4
+// 昨收(快照 ×10^4) → 内部 ×10^6 的换算因子:
+constexpr int64_t SZSE_PRECLOSE_MUL = 100;   // ×10^4 → ×10^6
 
 // 原始快照成交额精度 (交易所口径, 内部金额 == 该精度)
 constexpr int64_t TOTALVALUETRADE_SZSE_PRECISION = 10000;
@@ -305,7 +310,8 @@ inline int64_t amtFromProd(int64_t px, int64_t qty, SecurityIDSource src) {
          : (src == SecurityIDSource_SSE)  ? (px * qty) / SSE_AMT_FROM_PROD
                                           : (px * qty);
 }
-// 1 分钱 (0.01 元) 在交易所价格原生精度域中的值: 深 =100, 沪 =10。
+// 1 分钱 (0.01 元) 在内部价格(×10^6)精度域中的值 = 100000 (深/沪同)。
 inline int64_t tick1Cent(SecurityIDSource src) {
-    return (src == SecurityIDSource_SZSE) ? 100 : 10;
+    (void)src;
+    return 100000;
 }
