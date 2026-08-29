@@ -160,12 +160,47 @@ cmake --build build --config Release --parallel 8
 # 示例
 ./build/Release/orderbook_v2.exe "../data/AX_sbe_szse_000001/AX_sbe_szse_000001.log" 0 2 16384 64 1
 ```
+> 引擎也可用 GCC/MinGW 编译（性能测试环境即 MinGW g++ 8.1）。单元测试见下文「工程化」；编译器需支持 posix 线程以构建 GoogleTest。
 
 ### 性能优化建议
 1. 使用 **Release** 模式编译
 2. 确保 CPU 支持 **AVX2**
 3. 生产者绑 Core 0、消费者绑 Core 2
 4. 启用 **mmap**（默认开启）与**平铺哈希表**（ankerl，默认开启）
+
+---
+
+## 工程化：测试 / CI / PGO / SIMD A/B
+
+### 单元测试（GoogleTest + CTest）
+`cpp v2` 内置 GoogleTest 单元测试（`FETCHCONTENT` 拉取，`third_party/` 被 gitignore 故不 vendor）。覆盖 `SPSCQueue`、`HybridLevelBook`、`LatencyStats`、`MemoryPool`、`field_parser`、`AXOB` 冒烟。运行：
+
+```bash
+cd "cpp v2"
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DUSE_FLAT_HASHMAP=0 -DBUILD_TESTING=ON
+cmake --build build --config Release --target unit_tests --parallel 8
+ctest --test-dir build -C Release --output-on-failure
+```
+> 注：GoogleTest 需要 **posix 线程**（`std::thread`/`condition_variable`）；本引擎用 Win32 `CreateThread` 所以能在线程模型受限的 MinGW 上编译，但 gtest 需要标准 C++ 线程。Linux/gcc、MSVC 均可直接编译 gtest。引擎源码已去除 `__int128`（改为交易所原生 `int64` 精度），故 **MSVC 也能编译整个引擎**。
+
+### CI（GitHub Actions）
+`.github/workflows/ci.yml`：push/PR 到 main 触发，在 `ubuntu-latest`（gcc）上 configure（`USE_FLAT_HASHMAP=0, BUILD_TESTING=ON`）→ build → `ctest`。**只设 Linux job**（引擎是 GCC/Clang 目标，且 gtest 需 posix 线程）。
+
+### PGO（Profile-Guided Optimization）
+两遍构建已接入 CMake（`-DPGO_MODE=GEN|USE`），并有可复现脚本：
+```bash
+./scripts/run_pgo.sh <data_file>   # GEN -> 运行出 .gcda -> USE -> 打印基线 vs PGO
+```
+先用合成数据即可：`python tools/gen_market_data.py --out data_synth.log --msgs 200000`。
+> **诚实实测**：在合成 200k 条（MinGW g++ 8.1, `-O3 -flto`）下，PGO 对引擎纯处理（T2）与系统端到端（T1）均在噪声内（~±1%），无明显收益。原因：引擎已 `-O3 -flto` + `LIKELY/UNLIKELY` 分支提示；PGO 主要对分支/代码布局密集、未显式标注的代码收益大。**生成真实数据的 profile 才更可能带来收益**。故本仓库如实记录“PGO 可用但本合成负载无实测增益”，不虚报。
+
+### SIMD A/B（scalar / SSE4.2 / AVX2）
+`benchmark/bench_simd.cpp` 对 L2 字段串扫描做三路 A/B（`/arch:AVX2` 编译）：
+- scalar `strstr` → 109,695 field-scans/ms（最快）
+- SSE4.2 `_mm_cmpistri` → 40,426（-2.7×）
+- AVX2 `_mm256` → 40,092（-2.7×）
+
+> **结论**：AVX2（和 SSE4.2）在本场景**明显慢于** scalar——日志行短（~150B），CRT `strstr` 已有硬件加速，手动 SIMD 的 `load+movemask+ctz+memcmp` 反而开销更大（与 `field_parser.h`“SIMD 曾回滚”的注释一致）。**按“只有带来性能提升才采纳”的原则，AVX2 未接入生产热路径**，保留为 A/B 证据。
 
 ---
 
@@ -201,7 +236,7 @@ ACMTOrderBook/
 
 - **模块化**：`axob_init` / `axob_order` / `axob_trade` / `axob_cage` / `axob_snap`
 - **数据结构**：价格档有序树 + 订单 O(1) 查表
-- **精度处理**：深交所逐笔委托 → 统一定点 ×10⁵（价格/数量/金额同标度，int64）
+- **精度处理**：内部精度对齐交易所原生（深: 价格×10⁴/数量×10²/金额×10⁴，沪: 价格×10³/数量×10³/金额×10⁵），全 `int64`、无 `__int128`；金额 = 价格×数量，乘积精度 ×10⁶，境内单笔远低于 int64 上限。
 - **创业板价格笼子**：300xxx 股票 ±2% 有效竞价范围
 - **交易阶段**：OpenCall / AMTrading / PMTrading / CloseCall 全覆盖
 - **关键修正**：订单簿不从 orderMap 删除已成交订单（与原 Python 行为一致）
