@@ -181,6 +181,13 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DUSE_FLAT_HASHMAP=0 -DBUI
 cmake --build build --config Release --target unit_tests --parallel 8
 ctest --test-dir build -C Release --output-on-failure
 ```
+> **MSVC 一键版**（更省事）：已内置 `CMakePresets.json`，直接
+> ```bash
+> cd "cpp v2"
+> cmake --preset test        # configure + build unit_tests (BUILD_TESTING=ON)
+> cmake --build --preset test
+> ctest --preset unit        # 跑 GoogleTest
+> ```
 > 注：GoogleTest 需要 **posix 线程**（`std::thread`/`condition_variable`）；本引擎用 Win32 `CreateThread` 所以能在线程模型受限的 MinGW 上编译，但 gtest 需要标准 C++ 线程。Linux/gcc、MSVC 均可直接编译 gtest。引擎源码已去除 `__int128`（改为交易所原生 `int64` 精度），故 **MSVC 也能编译整个引擎**。
 
 ### CI（GitHub Actions）
