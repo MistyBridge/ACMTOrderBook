@@ -76,8 +76,8 @@ static const char* find_avx2(const char* hay, const char* needle) {
 }
 
 int main() {
+    // 场景A: L2 逐笔行 (短, ~150B) —— 生产实际负载
     std::vector<std::string> lines;
-    // 生成一批模拟逐笔行 (深市 SZSE MsgType=192), 字段顺序固定
     int N = 260000;
     lines.reserve(N);
     for (int i = 0; i < N; ++i) {
@@ -91,37 +91,55 @@ int main() {
         lines.emplace_back(buf);
     }
 
-    printf("AVX2 support: %s, SSE4.2: %s\n", hasAVX2()?"YES":"no", hasSSE42()?"YES":"no");
-    printf("lines=%d\n", (int)lines.size());
+    // 场景B: 长文本 (~2KB) —— 理论上是 SIMD 的强项场景 (非 L2 生产负载)
+    std::vector<std::string> longlines;
+    longlines.reserve(30000);
+    for (int i = 0; i < 30000; ++i) {
+        std::string s = "//MsgType=192 SecurityIDSource=102 SecurityID=300001 ApplSeqNum=";
+        s += std::to_string(i) + " Price=99800 OrderQty=1000 Side=1 OrdType=2 ";
+        s += std::string(1800, 'x');  // 填充长内容
+        s += " TransactTime=20220422100000000";
+        longlines.emplace_back(s);
+    }
 
-    auto bench = [&](const char* name, const char* (*fn)(const char*, const char*), bool enabled) {
-        if (!enabled) { printf("%-8s disabled\n", name); return; }
-        // correctness smoke
-        int found = 0;
-        for (auto& s : lines) if (fn(s.c_str(), "ApplSeqNum")) found++;
-        auto t0 = std::chrono::high_resolution_clock::now();
-        volatile uint64_t sink = 0;
-        for (int rep = 0; rep < 5; ++rep) {
+    printf("AVX2 support: %s, SSE4.2: %s\n", hasAVX2()?"YES":"no", hasSSE42()?"YES":"no");
+
+    // best-of-3 测量: 返回 field-scans/ms
+    auto bench = [&](const char* name, const char* (*fn)(const char*, const char*),
+                     const std::vector<std::string>& corpus, bool enabled) {
+        if (!enabled) { printf("  %-8s(%-8s) disabled\n", name, corpus[0].size()>200?"long":"short"); return; }
+        // 正确性等价: 三种实现找到的匹配数必须一致
+        uint64_t foundA=0, foundB=0;
+        for (auto& s : corpus) { if (fn(s.c_str(), "ApplSeqNum")) foundA++;  if (fn(s.c_str(), "SecurityID")) foundB++; }
+        double best = 1e18;
+        for (int rep = 0; rep < 3; ++rep) {
+            auto t0 = std::chrono::high_resolution_clock::now();
             uint64_t acc = 0;
-            for (auto& s : lines) {
+            for (auto& s : corpus) {
                 const char* p1 = fn(s.c_str(), "ApplSeqNum");
                 const char* p2 = fn(s.c_str(), "Price");
                 const char* p3 = fn(s.c_str(), "OrderQty");
-                if (p1) acc += (uint64_t)(p1[10]);   // 防优化
-                if (p2) acc += (uint64_t)(p2[5]);
-                if (p3) acc += (uint64_t)(p3[8]);
+                if (p1) acc += (uint64_t)(p1[10]); if (p2) acc += (uint64_t)(p2[5]); if (p3) acc += (uint64_t)(p3[8]);
             }
-            sink += acc;
+            // 防优化: 编译器无法删除核心循环; (volatile) 写回
+            *(volatile uint64_t*)&acc;
+            auto t1 = std::chrono::high_resolution_clock::now();
+            double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+            if (ms < best) best = ms;
         }
-        auto t1 = std::chrono::high_resolution_clock::now();
-        double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        double callsPerMs = (double)((uint64_t)N * 3 * 5) / ms;
-        printf("%-8s found=%d  %6.1f ms  %8.0f field-scans/ms\n", name, found, ms, callsPerMs);
-        (void)sink;
+        double scansPerMs = (double)(corpus.size() * 3) / best;
+        printf("  %-8s(%-8s) best %6.2f ms  %9.0f field-scans/ms  (foundA=%llu foundB=%llu)\n",
+               name, corpus[0].size()>200?"long":"short", best, scansPerMs,
+               (unsigned long long)foundA, (unsigned long long)foundB);
     };
 
-    bench("scalar", find_scalar, true);
-    bench("sse4.2", find_sse, hasSSE42());
-    bench("avx2",   find_avx2, hasAVX2());
+    printf("--- 场景A: 短 L2 行 (生产负载) ---\n");
+    bench("scalar", find_scalar, lines, true);
+    bench("sse4.2", find_sse, lines, hasSSE42());
+    bench("avx2",   find_avx2, lines, hasAVX2());
+    printf("--- 场景B: 长文本 (~2KB, 非生产负载, 理论上是 SIMD 强项) ---\n");
+    bench("scalar", find_scalar, longlines, true);
+    bench("sse4.2", find_sse, longlines, hasSSE42());
+    bench("avx2",   find_avx2, longlines, hasAVX2());
     return 0;
 }

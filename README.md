@@ -192,15 +192,18 @@ ctest --test-dir build -C Release --output-on-failure
 ./scripts/run_pgo.sh <data_file>   # GEN -> 运行出 .gcda -> USE -> 打印基线 vs PGO
 ```
 先用合成数据即可：`python tools/gen_market_data.py --out data_synth.log --msgs 200000`。
-> **诚实实测**：在合成 200k 条（MinGW g++ 8.1, `-O3 -flto`）下，PGO 对引擎纯处理（T2）与系统端到端（T1）均在噪声内（~±1%），无明显收益。原因：引擎已 `-O3 -flto` + `LIKELY/UNLIKELY` 分支提示；PGO 主要对分支/代码布局密集、未显式标注的代码收益大。**生成真实数据的 profile 才更可能带来收益**。故本仓库如实记录“PGO 可用但本合成负载无实测增益”，不虚报。
+> **诚实实测**：在合成 200k 条（MinGW g++ 8.1, `-O3 -flto`）下，PGO 对引擎纯处理（T2）与系统端到端（T1）均在噪声内（~±1%），无明显收益。原因：引擎已 `-O3 -flto` + `LIKELY/UNLIKELY` 分支提示；PGO 主要对分支/代码布局密集、未显式标注的代码收益大。
+> **采纳决定**：**PGO 已采纳为可选构建模式**——我们验证了它**无副作用**（基线版与 PGO_USE 版在相同数据上产出**逐位一致的确定性功能结果**；差异仅是双线程进度打印的交错顺序），且让系统更**泛用**（可对不同数据/机器生成 profile 以适配热点）。在合成负载上无实测增益，但真实数据/真实热分布下更可能获益。故保留 `scripts/run_pgo.sh` 作为标准两遍构建流程。
 
 ### SIMD A/B（scalar / SSE4.2 / AVX2）
-`benchmark/bench_simd.cpp` 对 L2 字段串扫描做三路 A/B（`/arch:AVX2` 编译）：
-- scalar `strstr` → 109,695 field-scans/ms（最快）
-- SSE4.2 `_mm_cmpistri` → 40,426（-2.7×）
-- AVX2 `_mm256` → 40,092（-2.7×）
+`benchmark/bench_simd.cpp` 对 L2 字段串扫描做三路 A/B（`/arch:AVX2`；含正确性等价校验，三实现 `foundA/foundB` 全部一致）：
 
-> **结论**：AVX2（和 SSE4.2）在本场景**明显慢于** scalar——日志行短（~150B），CRT `strstr` 已有硬件加速，手动 SIMD 的 `load+movemask+ctz+memcmp` 反而开销更大（与 `field_parser.h`“SIMD 曾回滚”的注释一致）。**按“只有带来性能提升才采纳”的原则，AVX2 未接入生产热路径**，保留为 A/B 证据。
+| 场景 | scalar `strstr` | SSE4.2 `_mm_cmpistri` | AVX2 `_mm256` |
+|---|---|---|---|
+| 短 L2 行（~150B，生产负载） | **100,199** | 52,828（-1.9×） | 50,263（-2.0×） |
+| 长文本（~2KB，理论 SIMD 强项） | **69,794** | 8,296（-8.4×） | 8,598（-8.1×） |
+
+> **结论**：无论短行还是长文本，**手写 SSE4.2 / AVX2 都明显慢于 scalar `strstr`**。原因：**CRT 的 `strstr` 内部已用 SIMD（甚至 AVX2）实现**，手写 `_mm256`/`_mm_cmpistri` 反而多出 `load+movemask+ctz+memcmp` 的开销（与 `field_parser.h`“SIMD 曾回滚”注释一致）。**按“只有带来性能提升才采纳”的原则，AVX2 决定不采纳**，保留 `benchmark/bench_simd.cpp` 作 A/B 证据。
 
 ---
 
