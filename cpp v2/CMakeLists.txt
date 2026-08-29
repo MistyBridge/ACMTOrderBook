@@ -176,7 +176,7 @@ target_compile_definitions(kline_sec PRIVATE
     NOMINMAX
 )
 target_compile_options(kline_sec PRIVATE
-    $<$<CXX_COMPILER_ID:MSVC>:/utf-8 /O2 /arch:AVX2 /GL>
+    $<$<CXX_COMPILER_ID:MSVC>:/utf-8 /O2 /arch:AVX2 /GL /wd4244 /wd4324>
 )
 if(MSVC)
     target_link_options(kline_sec PRIVATE /LTCG)
@@ -203,7 +203,7 @@ target_compile_definitions(ch_replay PRIVATE
     NOMINMAX
 )
 target_compile_options(ch_replay PRIVATE
-    $<$<CXX_COMPILER_ID:MSVC>:/utf-8 /O2 /arch:AVX2 /GL>
+    $<$<CXX_COMPILER_ID:MSVC>:/utf-8 /O2 /arch:AVX2 /GL /wd4244 /wd4324>
 )
 if(MSVC)
     target_link_options(ch_replay PRIVATE /LTCG)
@@ -307,6 +307,8 @@ target_compile_options(orderbook_v2 PRIVATE
         /O2                # 最大速度优化（Release）
         /arch:AVX2         # 启用 AVX2 指令集
         /GL                # 全程序优化（配合链接器 /LTCG）
+        /wd4244            # 有意收窄: 快照价格字段 int32 (×10^6 价格在 int32 内安全)
+        /wd4324            # alignas(64) 结构体 padding (CacheLinePadded 等)
     >
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:
         -Wall -Wextra
@@ -422,7 +424,7 @@ if(BUILD_TESTING)
         NOMINMAX
     )
     target_compile_options(unit_tests PRIVATE
-        $<$<CXX_COMPILER_ID:MSVC>:/utf-8 /W4 /O2 /arch:AVX2>
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8 /W4 /O2 /arch:AVX2 /wd4244 /wd4324>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -O2>
     )
     target_link_libraries(unit_tests PRIVATE GTest::gtest_main)

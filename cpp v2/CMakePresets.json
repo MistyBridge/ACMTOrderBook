@@ -69,6 +69,15 @@
                 "USE_ROBIN_HOOD": "ON",
                 "USE_UNORDERED_DENSE": "ON"
             }
+        },
+        {
+            "name": "test",
+            "displayName": "Build + GoogleTest unit tests",
+            "description": "MSVC build with unit tests enabled (FetchContent GoogleTest)",
+            "inherits": "default",
+            "cacheVariables": {
+                "BUILD_TESTING": "ON"
+            }
         }
     ],
     "buildPresets": [
@@ -78,19 +87,19 @@
             "configuration": "Release"
         },
         {
-            "name": "ankerl",
-            "configurePreset": "ankerl",
-            "configuration": "Release"
-        },
+            "name": "test",
+            "configurePreset": "test",
+            "configuration": "Release",
+            "targets": ["unit_tests"]
+        }
+    ],
+    "testPresets": [
         {
-            "name": "phmap",
-            "configurePreset": "phmap",
-            "configuration": "Release"
-        },
-        {
-            "name": "benchmark",
-            "configurePreset": "benchmark",
-            "configuration": "Release"
+            "name": "unit",
+            "configurePreset": "test",
+            "output": {
+                "outputOnFailure": true
+            }
         }
     ]
 }
