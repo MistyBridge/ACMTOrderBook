@@ -383,3 +383,55 @@ if(USE_UNORDERED_DENSE)
     endif()
 endif()
 
+# =====================================================================
+#  单元测试 (GoogleTest) — 经 CTest 注册
+#  BUILD_TESTING 由 include(CTest) 提供，默认 ON；可 -DBUILD_TESTING=OFF 关闭
+#  third_party/ 被 .gitignore 排除，故 GTest 用 FetchContent 在线拉取（CI 上无碍）
+# =====================================================================
+include(CTest)
+
+if(BUILD_TESTING)
+    include(FetchContent)
+    FetchContent_Declare(
+        googletest
+        URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.tar.gz
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    # 与 MSVC 运行时库一致，避免链接冲突（非 MSVC 下忽略）
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+
+    add_executable(unit_tests
+        tests/test_spsc_queue.cpp
+        tests/test_levelbook.cpp
+        tests/test_latency_stats.cpp
+        tests/test_memory_pool.cpp
+        tests/test_field_parser.cpp
+        tests/test_ob.cpp
+        behave/axob_init.cpp
+        behave/axob_order.cpp
+        behave/axob_trade.cpp
+        behave/axob_cage.cpp
+        behave/axob_snap.cpp
+        tool/msg_util.cpp
+    )
+    target_compile_definitions(unit_tests PRIVATE
+        USE_FLAT_HASHMAP=${USE_FLAT_HASHMAP}
+        _CRT_SECURE_NO_WARNINGS
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+    )
+    target_compile_options(unit_tests PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8 /W4 /O2 /arch:AVX2>
+        $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -O2>
+    )
+    target_link_libraries(unit_tests PRIVATE GTest::gtest_main)
+
+    include(GoogleTest)
+    gtest_discover_tests(unit_tests)
+
+    if(TARGET Threads::Threads)
+        target_link_libraries(unit_tests PRIVATE Threads::Threads)
+    endif()
+endif()
+
