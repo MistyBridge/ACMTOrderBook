@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # Linux (gcc) — 项目唯一可完整编译的工具链。
+  # 原因：引擎源码大量使用 __int128（GCC/Clang 扩展），MSVC 不支持；
+  # 且 GoogleTest 需要 posix 线程（本项目就因此用 Win32 CreateThread 而非 std::thread）。
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (gcc)
+        run: |
+          cmake -S "cpp v2" -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DUSE_FLAT_HASHMAP=0 \
+                -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel $(nproc)
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
