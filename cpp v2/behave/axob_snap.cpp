@@ -308,13 +308,13 @@ AxsbeSnapStock AXOB::genCallSnap(int showLevelNb) {
             // 必须用 TICK_1CENT, 否则只挪 0.00001 元, 虚拟撮合价偏离。
             if (askQty == 0 && bidQty == 0) {
                 if (_ask_q && price >= _ask_p) {
-                    if (_bid_p + TICK_1CENT < _ask_p) price = _ask_p - TICK_1CENT;
+                    if (_bid_p + tick1Cent(secSrc) < _ask_p) price = _ask_p - tick1Cent(secSrc);
                     else {
                         if (_ask_q <= _bid_q) { price = _ask_p; askQty = _ask_q; }
                         else { price = _bid_p; bidQty = _bid_q; }
                     }
                 } else if (_bid_q && price <= _bid_p) {
-                    if (_ask_p > _bid_p + TICK_1CENT) price = _bid_p + TICK_1CENT;
+                    if (_ask_p > _bid_p + tick1Cent(secSrc)) price = _bid_p + tick1Cent(secSrc);
                     else {
                         if (_bid_q <= _ask_q) { price = _bid_p; bidQty = _bid_q; }
                         else { price = _ask_p; askQty = _ask_q; }
@@ -407,16 +407,16 @@ AxsbeSnapStock AXOB::genTradingSnap(bool isVolBreaking, int levelNb) {
         snap.AskWeightPx = 0; snap.AskWeightSize = 0;
     } else {
         // 加权均价 = Σ(px×qty)/Σqty, 四舍五入 (×2 +1 >>1)。
-        // 中间量 __int128: Σ(px×qty) 在 ×10^5 下远超 int64; 商回落到内部价量级后
-        // 才收窄为 int64 交给 fmtPx 换算。
+        // 内部精度对齐交易所原生, Σ(px×qty) 乘积精度 ×10^6, 对境内真实簿远低于 int64 上限,
+        // 故用 int64 无需 __int128; 商回落到内部价量级后交给 fmtPx 换算。
         if (BidWeightSize != 0) {
-            int64_t wpx = (int64_t)(((BidWeightValue << 1) / BidWeightSize + 1) >> 1);
+            int64_t wpx = ((BidWeightValue << 1) / BidWeightSize + 1) >> 1;
             snap.BidWeightPx = fmtPx(wpx, instType, secSrc);
         } else snap.BidWeightPx = 0;
         snap.BidWeightSize = qtyInter2Snap(BidWeightSize, secSrc);
 
         if (AskWeightSize != 0) {
-            int64_t wpx = (int64_t)(((AskWeightValue << 1) / AskWeightSize + 1) >> 1);
+            int64_t wpx = ((AskWeightValue << 1) / AskWeightSize + 1) >> 1;
             snap.AskWeightPx = fmtPx(wpx, instType, secSrc);
         } else snap.AskWeightPx = 0;
         snap.AskWeightSize = qtyInter2Snap(AskWeightSize, secSrc);

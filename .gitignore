@@ -9,9 +9,16 @@
 
 # CMake build directories
 build/
+build-*/
 cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
+
+# PGO / profiling artifacts
+*.gcda
+*.gcno
+*.profraw
+pgo_profiles/
 
 # PyInstaller
 dist/

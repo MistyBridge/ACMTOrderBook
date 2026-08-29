@@ -105,15 +105,16 @@ public:
 #endif
 
     // ==================== 加权统计 ====================
-    // *Value 为全簿 Σ(price × qty) 累计和: 统一定点 ×10^5 下单档乘积即可达 1e21,
-    // 全簿求和更大, 必须 __int128 (实测 000001 买侧 1e8 股 × 10.54 元 = 1.05e19 已越 int64)。
+    // *Value 为全簿 Σ(price × qty) 累计和 (产品精度 ×10^6, 即 价格×数量乘积精度)。
+    // 内部精度对齐交易所原生 (深: 价×10^4/量×10^2, 沪: 价×10^3/量×10^3), 乘积精度 ×10^6,
+    // 对境内任何真实订单簿均远低于 int64 上限, 故用 int64, 无需 __int128。
     // *Size 为纯数量累计, int64 足够。
     int64_t  BidWeightSize    = 0;
-    __int128 BidWeightValue   = 0;
+    int64_t  BidWeightValue   = 0;
     int64_t  AskWeightSize    = 0;
-    __int128 AskWeightValue   = 0;
+    int64_t  AskWeightValue   = 0;
     int64_t  AskWeightSizeEx  = 0;
-    __int128 AskWeightValueEx = 0;
+    int64_t  AskWeightValueEx = 0;
 
     // ==================== 缓存单 ====================
     // [v2优化] 从 unique_ptr 改为栈上对象，省掉堆分配（ObOrder 仅 32B）

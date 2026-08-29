@@ -63,13 +63,11 @@ void AXOB::onTrade(const ObExec& exec) {
     TotalVolumeTrade += exec.LastQty;
 
     // 成交额累加 (统一定点 ×10^5, 与交易所/品种无关)。
-    // qty(×10^5) × px(×10^5) = 额(×10^10), 除 10^5 落回内部额精度 ×10^5。
-    //
-    // 必须用 __int128 承接中间乘积: 涨停封单单笔 13.2 亿股 (1.32e14) ×
-    // 高价股 (1e7) = 1.32e21, 远超 int64 上限 9.22e18。先乘后除保精度,
-    // 128 位中间量在 x86-64 上是单条 mul 指令, 热路径开销可忽略。
-    TotalValueTrade += (int64_t)((__int128)exec.LastQty * exec.LastPx
-                                 / AMT_INTER_PRECISION);
+    // 精度对齐交易所原生 (深: 价×10^4/量×10^2, 沪: 价×10^3/量×10^3), 金额 = 价格×数量,
+    // 乘积精度 ×10^6 (深/沪皆然), 除以 per-exchange 因子落到交易所金额精度 (深 ÷100 / 沪 ÷10)。
+    // 乘积上限 ≈ 单笔金额×10^6, 对境内真实单笔 (≈1e11 元) 仅 1e17, 远低于 int64 上限 9.22e18,
+    // 因此用 int64, 无需 __int128。
+    TotalValueTrade += amtFromProd(exec.LastPx, exec.LastQty, secSrc);
 
     LastPx = exec.LastPx;
     // [v2优化] OpenPx==0 仅首笔成交时为真
@@ -202,7 +200,7 @@ void AXOB::levelDequeue(Side side, int64_t price, int64_t qty, [[maybe_unused]] 
 
         if (bidCageUpperExMinQty == 0 || price < bidCageUpperExMinPrice) {
             BidWeightSize  -= qty;
-            BidWeightValue -= (__int128)price * qty;
+            BidWeightValue -= price * qty;
         } else if (price == bidCageUpperExMinPrice) {
             bidCageUpperExMinQty -= qty;
             if (bidCageUpperExMinQty == 0) {
@@ -246,10 +244,10 @@ void AXOB::levelDequeue(Side side, int64_t price, int64_t qty, [[maybe_unused]] 
         if (askCageLowerExMaxQty == 0 || price > askCageLowerExMaxPrice) {
             if (tradingPhase == TPM::OpenCall && price > mktInfo.PrevClosePx * 10) {
                 AskWeightSizeEx  -= qty;
-                AskWeightValueEx -= (__int128)price * qty;
+                AskWeightValueEx -= price * qty;
             } else {
                 AskWeightSize  -= qty;
-                AskWeightValue -= (__int128)price * qty;
+                AskWeightValue -= price * qty;
             }
         } else if (price == askCageLowerExMaxPrice) {
             askCageLowerExMaxQty -= qty;

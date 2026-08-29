@@ -29,7 +29,7 @@ void AXOB::activateCage() {
                 bidCageUpperExMinQty   = q;
             }
             BidWeightSize  -= q;
-            BidWeightValue -= (__int128)p * q;
+            BidWeightValue -= p * q;
         }
     });
     // 若最优买档被隐藏, 重定位最优可见买档
@@ -56,7 +56,7 @@ void AXOB::activateCage() {
                 askCageLowerExMaxQty   = q;
             }
             AskWeightSize  -= q;
-            AskWeightValue -= (__int128)p * q;
+            AskWeightValue -= p * q;
         }
     });
     // 若最优卖档被隐藏, 重定位最优可见卖档
@@ -83,7 +83,7 @@ void AXOB::openCage() {
         bidMaxPrice = bidCageUpperExMinPrice;
         bidMaxQty   = bidCageUpperExMinQty;
         BidWeightSize  += bidCageUpperExMinQty;
-        BidWeightValue += (__int128)bidCageUpperExMinPrice * bidCageUpperExMinQty;
+        BidWeightValue += bidCageUpperExMinPrice * bidCageUpperExMinQty;
         askCageRefPx = bidMaxPrice;
 
         bidCageUpperExMinQty = 0;
@@ -105,7 +105,7 @@ void AXOB::openCage() {
         askMinPrice = askCageLowerExMaxPrice;
         askMinQty   = askCageLowerExMaxQty;
         AskWeightSize  += askCageLowerExMaxQty;
-        AskWeightValue += (__int128)askCageLowerExMaxPrice * askCageLowerExMaxQty;
+        AskWeightValue += askCageLowerExMaxPrice * askCageLowerExMaxQty;
         bidCageRefPx = askMinPrice;
 
         askCageLowerExMaxQty = 0;
@@ -134,7 +134,7 @@ void AXOB::enterCage() {
                 bidMaxPrice = bidCageUpperExMinPrice;
                 bidMaxQty   = bidCageUpperExMinQty;
                 BidWeightSize  += bidCageUpperExMinQty;
-                BidWeightValue += (__int128)bidCageUpperExMinPrice * bidCageUpperExMinQty;
+                BidWeightValue += bidCageUpperExMinPrice * bidCageUpperExMinQty;
                 askCageRefPx = bidMaxPrice;
                 askWaitingForCage = (cageType == CageType::CYB);
 
@@ -158,7 +158,7 @@ void AXOB::enterCage() {
                 askMinPrice = askCageLowerExMaxPrice;
                 askMinQty   = askCageLowerExMaxQty;
                 AskWeightSize  += askCageLowerExMaxQty;
-                AskWeightValue += (__int128)askCageLowerExMaxPrice * askCageLowerExMaxQty;
+                AskWeightValue += askCageLowerExMaxPrice * askCageLowerExMaxQty;
                 bidCageRefPx = askMinPrice;
                 bidWaitingForCage = (cageType == CageType::CYB);
 

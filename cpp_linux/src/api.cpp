@@ -47,14 +47,14 @@ struct ObHandle {
         else if (sod > barSod) { finalizeBar(); barSod = sod; }
         truthCnt++;
         truthVol += e.LastQty;
-        // 引擎口径复算 (统一定点 ×10^5): 原始价/量升内部精度后相乘, 除 10^5 落回
-        // 内部额精度, 再换算回快照原始精度 — 与 axob_trade.cpp + genSnap 一致。
-        // __int128 中间量: 与引擎同因, 防涨停封单大单乘积越界。
+        // 精度对齐交易所原生 (深: 价×10^4/量×10^2, 沪: 价×10^3/量×10^3), 金额 = 价格×数量,
+        // 除以 per-exchange 因子落到交易所金额精度 — 与 axob_trade.cpp + genSnap 一致。
+        // 乘积精度 ×10^6, 对境内单笔 (≈1e11 元) 仅 ~1e17, 远低于 int64 上限, 无需 __int128。
         int64_t pxInter  = (e.secSrc == SecurityIDSource_SZSE)
                                ? e.LastPx * SZSE_PRICE_MUL
                                : e.LastPx * SSE_PRICE_MUL;
         int64_t qtyInter = qtySnap2Inter(e.LastQty, e.secSrc);
-        int64_t amtInter = (int64_t)((__int128)qtyInter * pxInter / AMT_INTER_PRECISION);
+        int64_t amtInter = amtFromProd(pxInter, qtyInter, e.secSrc);
         // 与 eAmt 同域比较: 累加内部精度, 到秒边界再整体换算 (避免逐笔换算的舍入累积)
         truthTurnoverInter += amtInter;
         truthClosePx = (int32_t)e.LastPx;

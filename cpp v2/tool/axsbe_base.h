@@ -245,23 +245,25 @@ constexpr int PRICE_SZSE_INCR_PRECISION  = 10000;
 constexpr int PRICE_SZSE_SNAP_PRECISION  = 10000;
 constexpr int PRICE_SSE_PRECISION        = 1000;
 
-// ==================== 内部计算精度 (统一定点 ×10^5) ====================
-// 价格/数量/金额一律 ×10^5 (最小可表示单位 1e-5), 不再按交易所/品种分叉。
-// 选 1e-5 的理由: ①深交所数量原生 2 位小数、上交所 3 位小数, 取更细者仍有余量;
-//   ②基金/可转债价格 3 位小数无需特例; ③碎股 (境外市场可至 1e-5 股) 可直接表示。
-// 字段位宽: 价格/数量/金额均为 int64 — ×10^5 下 int32 上限仅 21474.83, 必然越界。
-constexpr int64_t INTER_PRECISION = 100000;
-
-// 内部精度别名 (语义清晰, 值同为 INTER_PRECISION)
-constexpr int64_t PRICE_INTER_PRECISION = INTER_PRECISION;
-constexpr int64_t QTY_INTER_PRECISION   = INTER_PRECISION;
-constexpr int64_t AMT_INTER_PRECISION   = INTER_PRECISION;
-
-// ==================== 精度转换因子 (原始 → 内部, 乘法制) ====================
-// 原始精度均低于内部精度, 故一律为乘 (无截断, 无精度损失)。
-// 反向 (内部 → 原始) 一律为除, 见 fmtPriceInter2Snap / qtyInter2Snap。
-constexpr int64_t SZSE_PRICE_MUL = INTER_PRECISION / PRICE_SZSE_INCR_PRECISION;  // ×10
-constexpr int64_t SSE_PRICE_MUL  = INTER_PRECISION / PRICE_SSE_PRECISION;        // ×100
+// ==================== 内部计算精度 ====================
+// 内部精度直接对齐交易所原生精度（不做人为统一缩放）：
+//   深市: 价格 ×10^4, 数量 ×10^2, 金额 ×10^4
+//   沪市: 价格 ×10^3, 数量 ×10^3, 金额 ×10^5
+// 内部值 == 原始值（mul=1，零换算、零精度损失），且不再需要 __int128：
+//   金额 = 价格×数量, 乘积精度 = 深 ×10^6 / 沪 ×10^6 (远低于 int64 上限)。
+constexpr int64_t SZSE_PRICE_MUL = 1;   // 价格内部 == 原始 (深 ×10^4)
+constexpr int64_t SSE_PRICE_MUL  = 1;   // 价格内部 == 原始 (沪 ×10^3)
+constexpr int64_t SZSE_QTY_MUL   = 1;   // 数量内部 == 原始 (深 ×10^2)
+constexpr int64_t SSE_QTY_MUL    = 1;   // 数量内部 == 原始 (沪 ×10^3)
+// 金额: 内部金额精度 == 交易所金额精度, 故 快照回吐 ÷1。
+constexpr int64_t SZSE_AMT_DIV = 1;
+constexpr int64_t SSE_AMT_DIV  = 1;
+// 金额 = 价格×数量; 乘积精度 = ×10^4×10^2 = ×10^6 (深) / ×10^3×10^3 = ×10^6 (沪)。
+// 落到交易所金额精度 (深 ×10^4 / 沪 ×10^5) 所需除数:
+constexpr int64_t SZSE_AMT_FROM_PROD = 100;   // 10^6 / 10^4
+constexpr int64_t SSE_AMT_FROM_PROD  = 10;    // 10^6 / 10^5
+// 产品精度 (价格×数量), 用于加权值换算与溢出上限表达 (全 int64, 无 __int128)。
+constexpr int64_t PROD_PRECISION = 1000000;   // 10^6
 
 // ==================== 价格溢出 ====================
 constexpr int64_t ORDER_PRICE_OVERFLOW = 0x7FFFFFFF;   // 原始价格越界标记 (原始精度域)
@@ -273,7 +275,7 @@ constexpr int CYB_ORDER_ENVALUE_MAX_RATE = 9;
 // ==================== 其他精度常量 ====================
 constexpr int PRICE_SZSE_SNAP_PRECLOSE_PRECISION = 10000;
 
-// 原始快照成交额精度 (交易所口径, 仅用于喂入/回吐换算; 内部一律 AMT_INTER_PRECISION)
+// 原始快照成交额精度 (交易所口径, 内部金额 == 该精度)
 constexpr int64_t TOTALVALUETRADE_SZSE_PRECISION = 10000;
 constexpr int64_t TOTALVALUETRADE_SSE_PRECISION  = 100000;
 
@@ -281,15 +283,7 @@ constexpr int64_t TOTALVALUETRADE_SSE_PRECISION  = 100000;
 constexpr int64_t QTY_SZSE_PRECISION = 100;
 constexpr int64_t QTY_SSE_PRECISION  = 1000;
 
-// 数量换算因子 (原始 → 内部 ×10^5, 乘法制)
-constexpr int64_t SZSE_QTY_MUL = INTER_PRECISION / QTY_SZSE_PRECISION;   // ×1000
-constexpr int64_t SSE_QTY_MUL  = INTER_PRECISION / QTY_SSE_PRECISION;    // ×100
-
-// 成交额换算因子 (内部 ×10^5 → 原始快照精度, 除法制)
-constexpr int64_t SZSE_AMT_DIV = AMT_INTER_PRECISION / TOTALVALUETRADE_SZSE_PRECISION;  // ÷10
-constexpr int64_t SSE_AMT_DIV  = AMT_INTER_PRECISION / TOTALVALUETRADE_SSE_PRECISION;   // ÷1
-
-// ---- 内部 ↔ 原始 换算辅助 (数量/金额; 价格见 ob_types.h::fmtPriceInter2Snap) ----
+// ---- 内部 ↔ 原始 换算辅助 (均 mul=1, 即恒等; 保留接口以兼容调用点) ----
 inline int64_t qtySnap2Inter(int64_t rawQty, SecurityIDSource src) {
     return (src == SecurityIDSource_SZSE) ? rawQty * SZSE_QTY_MUL
          : (src == SecurityIDSource_SSE)  ? rawQty * SSE_QTY_MUL
@@ -304,4 +298,14 @@ inline int64_t amtInter2Snap(int64_t amt, SecurityIDSource src) {
     return (src == SecurityIDSource_SZSE) ? amt / SZSE_AMT_DIV
          : (src == SecurityIDSource_SSE)  ? amt / SSE_AMT_DIV
                                           : amt;
+}
+// 金额 = 价格×数量 → 交易所金额精度(内部): 除 per-exchange 因子。
+inline int64_t amtFromProd(int64_t px, int64_t qty, SecurityIDSource src) {
+    return (src == SecurityIDSource_SZSE) ? (px * qty) / SZSE_AMT_FROM_PROD
+         : (src == SecurityIDSource_SSE)  ? (px * qty) / SSE_AMT_FROM_PROD
+                                          : (px * qty);
+}
+// 1 分钱 (0.01 元) 在交易所价格原生精度域中的值: 深 =100, 沪 =10。
+inline int64_t tick1Cent(SecurityIDSource src) {
+    return (src == SecurityIDSource_SZSE) ? 100 : 10;
 }

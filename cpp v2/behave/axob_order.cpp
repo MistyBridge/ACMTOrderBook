@@ -193,7 +193,7 @@ void AXOB::insertOrder(const ObOrder& order, bool outOfCage) {
         }
         if (!outOfCage) {
             BidWeightSize  += order.qty;
-            BidWeightValue += (__int128)order.price * order.qty;
+            BidWeightValue += order.price * order.qty;
         }
     } else if (order.side == Side::ASK) {
         auto* node = askLevelBook.find(order.price);
@@ -224,10 +224,10 @@ void AXOB::insertOrder(const ObOrder& order, bool outOfCage) {
             // 开盘集合竞价期间，超过昨收N倍的委托不参与统计
             if (tradingPhase == TPM::OpenCall && order.price > mktInfo.PrevClosePx * CYB_ORDER_ENVALUE_MAX_RATE) {
                 AskWeightSizeEx  += order.qty;
-                AskWeightValueEx += (__int128)order.price * order.qty;
+                AskWeightValueEx += order.price * order.qty;
             } else {
                 AskWeightSize  += order.qty;
-                AskWeightValue += (__int128)order.price * order.qty;
+                AskWeightValue += order.price * order.qty;
             }
         }
     }
