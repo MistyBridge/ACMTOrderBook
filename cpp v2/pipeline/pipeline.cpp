@@ -1,8 +1,16 @@
 #include "pipeline.h"
-#include "../core/cpu_affinity.h"
+#include "../core/cpu_affinity.h"   // 定义 AXOB_HAS_STD_THREAD + setThreadAffinity 系列
 #include <cstdio>
 #include <chrono>
 
+// =====================================================================
+//  跨平台线程创建
+//   - Linux/macOS/MSVC (posix 线程模型): 用 std::thread + setThreadAffinity
+//   - MinGW win32 线程模型 (std::thread 不可用): 用 Win32 CreateThread
+// =====================================================================
+
+#if !defined(AXOB_HAS_STD_THREAD)
+// ---- MinGW win32 线程模型专用路径 ----
 #ifndef WIN32_LEAN_AND_MEAN
     #define WIN32_LEAN_AND_MEAN
 #endif
@@ -11,15 +19,11 @@
 #endif
 #include <windows.h>
 
-// =====================================================================
-//  跨平台线程创建（MinGW win32 线程模型不支持 std::thread）
-// =====================================================================
-
 struct ProducerArg {
     const char* dataFile;
     axob::core::SPSCQueue<MarketEvent>* queue;
     ProducerStats* stats;
-    int replayCount;  // 重放次数
+    int replayCount;
 };
 
 struct ConsumerArg {
@@ -40,6 +44,7 @@ static DWORD WINAPI consumerEntry(LPVOID arg) {
     consumerThread(*a->queue, *a->axob, *a->latency, *a->stats);
     return 0;
 }
+#endif  // !AXOB_HAS_STD_THREAD
 
 // =====================================================================
 //  Pipeline 构造函数
@@ -75,30 +80,35 @@ void Pipeline::run() {
     ProducerStats producerStats;
     ConsumerStats consumerStats;
 
-    // 线程参数（栈上，生命周期覆盖线程运行期间）
-    ProducerArg pArg{dataFile_, &queue, &producerStats, replayCount_};
-    ConsumerArg cArg{&queue, &axob, &latency, &consumerStats};
-
     // 记录开始时间
     auto t0 = std::chrono::high_resolution_clock::now();
 
-    // 启动生产者线程
-    HANDLE hProducer = CreateThread(
-        nullptr, 0, producerEntry, &pArg, 0, nullptr);
-
-    // 启动消费者线程
-    HANDLE hConsumer = CreateThread(
-        nullptr, 0, consumerEntry, &cArg, 0, nullptr);
-
-    // 绑定 CPU 核心
+    // 启动生产者/消费者线程 + 绑核
+#if defined(AXOB_HAS_STD_THREAD)
+    // posix/MSVC: std::thread (天然跨平台)
+    std::thread producer([&]() {
+        producerThread(dataFile_, queue, producerStats, replayCount_);
+    });
+    std::thread consumer([&]() {
+        consumerThread(queue, axob, latency, consumerStats);
+    });
+    axob::core::setThreadAffinity(producer, producerCore_);
+    axob::core::setThreadAffinity(consumer, consumerCore_);
+    producer.join();
+    consumer.join();
+#else
+    // MinGW win32 线程模型: Win32 CreateThread
+    ProducerArg pArg{dataFile_, &queue, &producerStats, replayCount_};
+    ConsumerArg cArg{&queue, &axob, &latency, &consumerStats};
+    HANDLE hProducer = CreateThread(nullptr, 0, producerEntry, &pArg, 0, nullptr);
+    HANDLE hConsumer = CreateThread(nullptr, 0, consumerEntry, &cArg, 0, nullptr);
     axob::core::setThreadAffinityByHandle(hProducer, producerCore_);
     axob::core::setThreadAffinityByHandle(hConsumer, consumerCore_);
-
-    // 等待两个线程完成
     WaitForSingleObject(hProducer, INFINITE);
     WaitForSingleObject(hConsumer, INFINITE);
     CloseHandle(hProducer);
     CloseHandle(hConsumer);
+#endif
 
     // 记录结束时间
     auto t1 = std::chrono::high_resolution_clock::now();

@@ -7,9 +7,10 @@ on:
     branches: [ main ]
 
 jobs:
-  # Linux (gcc) — 项目唯一可完整编译的工具链。
-  # 原因：引擎源码大量使用 __int128（GCC/Clang 扩展），MSVC 不支持；
-  # 且 GoogleTest 需要 posix 线程（本项目就因此用 Win32 CreateThread 而非 std::thread）。
+  # Linux (gcc) — 跨平台收口工具链。
+  # 说明：引擎已移除 __int128、pipeline 改用 std::thread，故 MSVC 与 Linux gcc 均可编译；
+  #       CI 用 Linux gcc 验证最权威（跨平台 + GoogleTest 需 posix 线程）。
+  #       只构建核心目标（orderbook_v2 / kline_sec / unit_tests）；ch_replay(ClickHouse) 非重点，不在 CI。
   build-linux:
     runs-on: ubuntu-latest
     steps:
@@ -22,8 +23,11 @@ jobs:
                 -DUSE_FLAT_HASHMAP=0 \
                 -DBUILD_TESTING=ON
 
-      - name: Build
-        run: cmake --build build --config Release --parallel $(nproc)
+      - name: Build (core targets)
+        run: |
+          cmake --build build --config Release \
+                --target orderbook_v2 kline_sec unit_tests \
+                --parallel $(nproc)
 
       - name: Unit tests
         run: ctest --test-dir build --output-on-failure
