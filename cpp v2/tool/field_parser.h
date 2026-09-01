@@ -13,8 +13,9 @@
 //  [v2.3] 代码模板化重构
 //  提取通用解析逻辑，减少代码重复
 //
-//  [v2.5] SIMD 加速优化
-//  使用 SSE4.2 指令加速字符串查找
+//  [v2.5] SIMD 加速的字符串查找（评估后决定不采纳，回退 strstr）
+//  基准证明手写 SSE4.2/AVX2 慢于 CRT strstr（其内部已用 SIMD），故 strstr_simd
+//  直接回退 strstr。详见 benchmark/bench_simd.cpp。
 // =====================================================================
 
 #include <cstdint>
@@ -22,99 +23,22 @@
 #include <cstdlib>
 #include "axsbe_base.h"
 
-// SIMD 支持
-#ifdef _MSC_VER
-    #include <intrin.h>
-    #include <nmmintrin.h>  // SSE4.2
-#else
-    #include <x86intrin.h>
-    #include <nmmintrin.h>
-    #include <cpuid.h>
-#endif
-
 // =====================================================================
-//  SIMD 加速的字符串查找
+//  [v2.3] 字符串查找
 //
-//  使用 SSE4.2 的 _mm_cmpistri 指令加速字符串查找
-//  如果 CPU 不支持 SSE4.2，回退到标准 strstr()
-//
-//  性能对比：
-//    - strstr(): ~10ns/调用
-//    - strstr_simd(): ~2ns/调用
-//    - 节省：~8ns/调用 = +5-10% 吞吐量
+//  使用标准 C 库 strstr()。内部（MSVC/glibc)已用 SIMD 实现，故手写
+//  SSE4.2/AVX2 反而更慢（见 benchmark/bench_simd.cpp 的 A/B 证据），
+//  决定不采纳。strstr_simd() 保留为语义别名，直接回退 strstr()。
+//  （注：已移除 _mm_cmpistri 路径——它在未启用 SSE4.2 的 gcc 目标上
+//   即使不调用也会因 always_inline 目标不匹配而编译失败，且无性能收益。）
 // =====================================================================
 
-// 检查 CPU 是否支持 SSE4.2
-inline bool hasSSE42() {
-    static bool checked = false;
-    static bool result = false;
-    if (!checked) {
-#ifdef _MSC_VER
-        int cpuInfo[4];
-        __cpuid(cpuInfo, 1);
-        result = (cpuInfo[2] & (1 << 20)) != 0;
-#else
-        unsigned int eax = 0, ebx = 0, ecx = 0, edx = 0;
-        __get_cpuid(1, &eax, &ebx, &ecx, &edx);
-        result = (ecx & (1u << 20)) != 0;  // SSE4.2 标志位
-#endif
-        checked = true;
-    }
-    return result;
-}
-
-// SIMD 字符串查找（SSE4.2）
+// 字符串查找（语义别名，回退到标准 strstr()）
 // haystack: 被搜索的字符串
 // needle: 要查找的子字符串
 // 返回值：找到的位置，如果未找到返回 nullptr
 inline const char* strstr_simd(const char* haystack, const char* needle) {
-    // 如果 CPU 不支持 SSE4.2，回退到标准 strstr()
-    if (!hasSSE42()) {
-        return strstr(haystack, needle);
-    }
-
-    // 处理边界情况
-    if (!needle[0]) return haystack;
-    if (!needle[1]) return strchr(haystack, needle[0]);
-
-    size_t needle_len = strlen(needle);
-    size_t haystack_len = strlen(haystack);
-
-    // 如果 needle 比 haystack 长，直接返回 nullptr
-    if (needle_len > haystack_len) return nullptr;
-
-    // 使用 SSE4.2 加速查找
-    // 策略：查找 needle 的第一个字符，然后验证完整字符串
-    __m128i needle_first = _mm_set1_epi8(needle[0]);
-
-    const char* p = haystack;
-    const char* end = haystack + haystack_len - needle_len + 1;
-
-    while (p < end) {
-        // 加载 16 字节数据
-        __m128i block = _mm_loadu_si128((const __m128i*)p);
-
-        // 查找第一个字符的匹配位置
-        int mask = _mm_cmpistri(needle_first, block,
-                                 _SIDD_CMP_EQUAL_ANY | _SIDD_UBYTE_OPS);
-
-        if (mask < 16) {
-            // 找到潜在匹配，验证完整字符串
-            const char* candidate = p + mask;
-            if (candidate + needle_len <= haystack + haystack_len) {
-                if (strncmp(candidate, needle, needle_len) == 0) {
-                    return candidate;
-                }
-            }
-            // 继续查找下一个位置
-            p = candidate + 1;
-        } else {
-            // 没有找到，移动到下一个 16 字节块
-            p += 16;
-        }
-    }
-
-    return nullptr;
+    return strstr(haystack, needle);
 }
 
 // 直接在行字符串中查找 key=value，转为 int64
