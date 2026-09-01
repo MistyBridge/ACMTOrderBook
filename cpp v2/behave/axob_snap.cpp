@@ -306,8 +306,8 @@ AxsbeSnapStock AXOB::genCallSnap(int showLevelNb) {
         } else {
             // 无交叉，修正成交价
             // 无交叉时向对手价靠一个最小价位 (A股最小价位 = 0.01 元)。
-            // 注意: 原实现写字面量 1 (绑定内部 ×10^2 精度), 统一定点 ×10^5 后
-            // 必须用 TICK_1CENT, 否则只挪 0.00001 元, 虚拟撮合价偏离。
+            // 注意: 原实现写字面量 1 (绑定旧 ×10^2 精度), 内部统一 ×10^6 后
+            // 必须用 tick1Cent, 否则只挪错误的价位, 虚拟撮合价偏离。
             if (askQty == 0 && bidQty == 0) {
                 if (_ask_q && price >= _ask_p) {
                     if (_bid_p + tick1Cent(secSrc) < _ask_p) price = _ask_p - tick1Cent(secSrc);

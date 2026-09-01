@@ -38,7 +38,7 @@ struct ObHandle {
     // 引擎独立维护 NumTrades/TotalVolumeTrade/TotalValueTrade/LastPx,
     // 在秒边界与输入行的累计值核对: 丢笔/重笔/口径漂移都会在此暴露。
     int64_t barSod = -1;                     // 当前秒 HHMMSS
-    int64_t truthCnt = 0, truthVol = 0, truthTurnoverInter = 0;   // Inter: 内部 ×10^5 域
+    int64_t truthCnt = 0, truthVol = 0, truthTurnoverInter = 0;   // Inter: 内部价格 ×10^6 域
     int32_t truthClosePx = 0;                // 末笔价 (原始精度: 深 ×10^4 / 沪 ×10^3)
 
     void barTick(const AxsbeExe& e) {
@@ -62,7 +62,7 @@ struct ObHandle {
     void finalizeBar() {
         if (barSod == -1) return;
         val.bar_seconds++;
-        // 比对域统一为"原始精度": 引擎侧内部 ×10^5 一律换算回原始, truth 侧本就是原始。
+        // 比对域统一为"原始精度": 引擎侧内部 ×10^6 一律换算回原始, truth 侧本就是原始。
         int64_t eCnt   = engine.NumTrades;
         int64_t eVol   = qtyInter2Snap(engine.TotalVolumeTrade, engine.secSrc);
         int64_t eAmt   = amtInter2Snap(engine.TotalValueTrade, engine.secSrc);
@@ -475,7 +475,7 @@ int64_t acmt_ob_get_levels(acmt_ob_handle h,
     auto [askMap, bidMap] = ob->engine.getLevels(max_levels);
     const auto src = ob->engine.secSrc;
     const auto ity = ob->engine.instType;
-    // 内部 ×10^5 → 对外快照原始精度 (与 acmt_snap_t 各档口径一致)
+    // 内部 ×10^6 → 对外快照原始精度 (与 acmt_snap_t 各档口径一致)
     int64_t i = 0;
     for (const auto& [p, l] : askMap) {
         if (i >= max_levels) break;
@@ -514,7 +514,7 @@ void acmt_ob_get_stat(acmt_ob_handle h, acmt_ob_stat_t* out) {
     const auto src = ob->engine.secSrc;
     const auto ity = ob->engine.instType;
     out->num_trades         = ob->engine.NumTrades;
-    // [基线对齐] 引擎内部统一 ×10^5 → 基线引擎域 (基线 fetchIncs 直接累计:
+    // [基线对齐] 引擎内部(价格 ×10^6, 量/额为原生) → 基线引擎域 (基线 fetchIncs 直接累计:
     //   深 ×10^4 / 沪 ×10^5, 金额 深 ×10^4 / 沪 ×10^7)。实测 70 场基线 CSV
     //   差值: 深 vol = 内部/10, 沪 vol = 内部; 深 amt = 内部×10, 沪 amt = 内部×100。
     const bool isSzse = (ob->engine.secSrc == SecurityIDSource_SZSE);

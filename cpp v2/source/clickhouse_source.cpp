@@ -209,22 +209,21 @@ void ClickHouseSource::load(const std::string& date, const std::string& instrume
     snapCnt_ = orderCnt_ = exeCnt_ = 0;
 
     sse_ = (exchange == 1);
-    // CH 原始值域 -> 交易所原生精度 (解析换算与全量版一致; 引擎内部 ×10^5 归一化在 axob_*)
+    // CH 原始值域 -> 交易所原生精度 (解析换算与全量版一致; 引擎内部按 axsbe_base.h 定点归一化)
     // 数据实测 (600584 20260716): 沪市三表价格统一 ×10^4 —
     //   TICK last=875800 = 87.58 元, 涨停 upper_limit=1017100 = 101.71 元;
     //   ORDER/TRANSACTION 同域 (867000 = 86.70 元)。统一 ÷10 进引擎 ×10^3 域。
     pxDiv_     = sse_ ? 10 : 1;    // 沪 ×10^4 ÷10 -> ×10^3; 深 ×10^4 原样
     // 数量域 (数据实测 + 引擎 axsbe_base.h 定点常量对齐):
-    //   ORDER/TRANSACTION: 深沪均为百股(×10^2)。深: 引擎输入原样
-    //     (qtySnap2Inter ×1000 → 内部 ×10^5); 沪: 解析 ×10 → ×10^3 域,
-    //     引擎 ×100 → 内部 ×10^5 (与 genTradingSnap 输出 qtyInter2Snap ÷100 同域)。
+    //   ORDER/TRANSACTION: 深沪均为百股(×10^2)。深: 引擎输入原样 (qty 为原生);
+    //     沪: 解析 ×10 → ×10^3 域 (纯解析换算, 引擎侧 qty 归一化见 QTY_MUL)。
     //   TICK: 深沪均为百股(×10^2), 沪 ×10 → ×10^3 域。
     //   [史] 曾设沪 qtyMulInc_=1000 (误以为沪逐笔为股) → 簿量放大 100 倍
     //     (600584 全帧全等失败 0/4740)。核对: 拍卖买单 3,276,500 百股 =
     //     撮合 2,679,814 + 残余 286,086 (TICK b0) + 撤单 310,600, 分毫不差。
     qtyMulInc_  = sse_ ? 10 : 1;       // 逐笔: 沪百股×10(→×10^3 域) / 深百股原样
     qtyMulSnap_ = sse_ ? 10 : 1;       // 快照: 沪百股×10(→×10^3 域) / 深百股原样
-    amtMul_ = sse_ ? 10 : 1;       // 额 ×10^4 -> ×10^5(沪) / ×10^4(深)
+    amtMul_ = sse_ ? 10 : 1;       // 额定域换算: 额 ×10^4 -> ×10^5(沪) / 深保持 ×10^4
     securityId_ = std::stoi(instrument.substr(0, 6));
 
     std::string ins = instrument;

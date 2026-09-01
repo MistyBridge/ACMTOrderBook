@@ -62,7 +62,7 @@ TEST(ObTypes, ObExecConstruction) {
 // ---- AXOB 重建冒烟：一买一卖一成交 ----
 TEST(AXOB, RebuildBasicBidAskTrade) {
     AXOB axob(300001, SecurityIDSource_SZSE, InstrumentType::STOCK);
-    axob.mktInfo.PrevClosePx = 1000000;  // 10.00 (内部 ×10^5)
+    axob.mktInfo.PrevClosePx = 10000000;  // 10.00 (内部 ×10^6)
 
     auto mkOrder = [&](uint64_t seq, int64_t px, int64_t qty, uint8_t side) {
         AxsbeOrder o;

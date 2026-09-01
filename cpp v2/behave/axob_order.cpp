@@ -38,7 +38,7 @@ void AXOB::onMsg(const AxsbeOrder& msg) {
         ObCancel c;
         c.applSeqNum   = msg.OrderNo;
         c.qty          = qtySnap2Inter(msg.OrderQty, msg.secSrc);
-        c.price        = msg.Price * SSE_PRICE_MUL;   // 原始 ×10^3 → 内部 ×10^5
+        c.price        = msg.Price * SSE_PRICE_MUL;   // 原始 ×10^3 → 内部 ×10^6
         c.side         = msg.isBuy() ? Side::BID : Side::ASK;
         c.TransactTime = msg.TransactTime;
         onCancel(c);

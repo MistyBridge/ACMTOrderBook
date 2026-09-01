@@ -88,7 +88,7 @@ struct ObOrder {
     uint64_t TransactTime = 0; // 8B  offset=8
     uint64_t bizIndex = 0;     // 8B  offset=16 上交所: 业务序号 (成交门控: trade.biz > order.biz 才削减主动侧)
     int64_t  qty;              // 8B  offset=24 (内部 ×10^6, 单档可超 21 亿股, 必须 int64)
-    int64_t  price;            // 8B  offset=32 (内部 ×10^6, int32 上限 21474.83 元不够)
+    int64_t  price;            // 8B  offset=32 (内部 ×10^6, int32 上限 2147.48 元不够)
     Side     side;             // 1B  offset=40
     OrdType  type;             // 1B  offset=41
     bool     traded = false;   // 1B  offset=42
@@ -164,7 +164,7 @@ struct ObCancel {
 };
 
 // ---- level_node：价格档位 ----
-// price/qty 均 int64: 内部定点 ×10^5 下, 价格 int32 上限仅 21474.83 元,
+// price/qty 均 int64: 内部定点 ×10^6 下, 价格 int32 上限仅 2147.48 元,
 // 单档挂单 (如涨停封单 13 亿股 → 1.3e14) 更是远超 int32, 溢出会直接摧毁订单簿。
 struct LevelNode {
     int64_t price = 0;
