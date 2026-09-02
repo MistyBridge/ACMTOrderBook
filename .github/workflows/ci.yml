@@ -10,7 +10,7 @@ jobs:
   # Linux (gcc) — 跨平台收口工具链。
   # 说明：引擎已移除 __int128、pipeline 改用 std::thread，故 MSVC 与 Linux gcc 均可编译；
   #       CI 用 Linux gcc 验证最权威（跨平台 + GoogleTest 需 posix 线程）。
-  #       只构建核心目标（orderbook_v2 / kline_sec / unit_tests）；ch_replay(ClickHouse) 非重点，不在 CI。
+  #       只构建核心目标（orderbook_v2 / kline_sec / unit_tests）。
   build-linux:
     runs-on: ubuntu-latest
     steps:

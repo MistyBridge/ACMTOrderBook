@@ -8,8 +8,7 @@
 
 - **Python 参照实现**（`py/`）— 行为基准，用于正确性对照；
 - **C++ v1**（单线程）— 基础重写；
-- **C++ v2**（多线程 · 当前引擎）— `SPSC 无锁队列 + 读写分离双线程`，结合零拷贝 mmap、HybridLevelBook、平铺哈希、大页缓存等优化；
-- **Linux 共享库**（`cpp_linux`，ClickHouse 流式回放）。
+- **C++ v2**（多线程 · 当前引擎）— `SPSC 无锁队列 + 读写分离双线程`，结合零拷贝 mmap、HybridLevelBook、平铺哈希、大页缓存等优化。
 
 **核心亮点**
 
@@ -29,7 +28,7 @@
 - 🧵 **双线程读写分离**：SPSC 无锁队列，生产者/消费者并行处理
 - 📊 **完整能力**：逐笔订单簿重建、十档快照、委托队列展示
 - 🖥️ **GUI 仪表盘**：`dashboard.py` 对比 Python 与 C++ 版本
-- 🔀 **跨实现**：Python 参照实现 + C++ v1 / v2（Windows）+ Linux 共享库（`cpp_linux`，ClickHouse 直连）
+- 🔀 **跨实现**：Python 参照实现 + C++ v1 / v2（Windows），同一内核跨平台（MSVC / GCC）
 - 🗂 **版本管理**：`versions/` 收录各历史版本源码（按 commit 检出，见[版本管理](#版本管理)）
 
 ---
@@ -85,7 +84,7 @@ T1 是"系统端到端"吞吐：`总消息数 ÷ 整段墙钟`，**包含文件�
 ![全历史吞吐量性能曲线](throughput.png)
 
 - 红色曲线：**本机实测 T1 系统端到端**（000001 2022-04-22，233,875 条，纵轴对数）
-- 曲线脚本：`cpp_linux/plot_throughput.py`
+- 曲线脚本：`plot_throughput.py`
 
 ---
 
@@ -94,7 +93,6 @@ T1 是"系统端到端"吞吐：`总消息数 ÷ 整段墙钟`，**包含文件�
 - **`py/`** — Python 参照实现（行为基准）
 - **`cpp v1/`** — 单线程 C++ 版本（基础重写，含完整订单簿功能）
 - **`cpp v2/`** — 多线程优化版本，即当前引擎（含 SPSC 队列、mmap、HybridLevelBook、L1 延迟统计等）
-- **`cpp_linux/`** — Linux 版引擎 + ClickHouse 流式回放（`src/api.cpp`、`demo/replay_ch.cpp`）
 - **`versions/`** — 历史版本源码归档（见下方版本管理）
 
 ---
@@ -219,22 +217,19 @@ ctest --test-dir build -C Release --output-on-failure
 ```
 ACMTOrderBook/
 ├── dashboard.py             ← 对比仪表盘源码
+├── plot_throughput.py       ← 版本演进吞吐曲线脚本
 ├── py/                      ← Python 参照实现
 │   ├── main.py
 │   ├── behave/              ← 订单簿引擎核心
 │   └── tool/                ← 消息解析工具
 ├── cpp v1/                  ← 单线程 C++ 版本
-├── cpp v2/                  ← 多线程优化版本（Windows, 当前引擎）
+├── cpp v2/                  ← 多线程优化版本（跨平台, 当前引擎）
 │   ├── main.cpp
 │   ├── core/                ← 基础组件 (SPSC 队列、内存池、缓存行、CPU 亲和性、延迟统计)
 │   ├── pipeline/            ← 管道架构 (生产者/消费者)
 │   ├── behave/              ← 订单簿引擎核心
-│   ├── tool/                ← 消息解析工具 (mmap/field_parser)
-│   └── source/              ← ClickHouse 数据源 (ch_client/clickhouse_source)
-├── cpp_linux/               ← Linux 版引擎 + ClickHouse 流式回放
-│   ├── src/api.cpp          ← C API (快照校验闭环 / 1s 聚合校验)
-│   ├── demo/replay_ch.cpp   ← 回放入口 (CH_USER/CH_PASSWORD)
-│   └── plot_throughput.py   ← 吞吐量曲线脚本
+│   └── tool/                ← 消息解析工具 (mmap/field_parser)
+├── benchmark/               ← SIMD A/B 基准 (bench_simd.cpp)
 ├── versions/                ← 历史版本源码归档 (v1 ~ v2.6)
 ├── throughput.png           ← 版本演进实测曲线
 └── data/                    ← 测试数据 (体积大, 不入仓库, 见"数据源")
@@ -260,7 +255,7 @@ ACMTOrderBook/
 data/AX_sbe_szse_000001/AX_sbe_szse_000001.log
 data/AX_sbe_szse_300750/AX_sbe_szse_300750.log
 ```
-数据获取方式：历史 L2 样例见[百度盘](https://pan.baidu.com/s/13O7b30DXM64j4WpnNgvXXg)（提取码 `rxif`），或经 `cpp_linux` 直连公司内网 ClickHouse（`LEVEL2.ORDER_` / `TRANSACTION_` / `TICK_` 表，凭据走 `CH_USER`/`CH_PASSWORD`）。
+数据获取方式：历史 L2 样例见[百度盘](https://pan.baidu.com/s/13O7b30DXM64j4WpnNgvXXg)（提取码 `rxif`）。
 
 ---
 

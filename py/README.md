@@ -6,7 +6,7 @@
 
 * `main.py` — 入口：读 L2 历史文件并回放重建订单簿
 * `behave/` — 订单簿引擎核心（axob.py 等）
-* `tool/` — 行情解析工具（axsbe_*.py 消息结构、msg_util.py 读取 L2 历史文件、ch_to_axsbe.py 从 ClickHouse 导出）
+* `tool/` — 行情解析工具（axsbe_*.py 消息结构、msg_util.py 读取 L2 历史文件）
 
 ## 执行
 
@@ -17,5 +17,5 @@ python main.py ../data/20220422/AX_sbe_szse_000001.log 1
 
 ## 与 C++ 版关系
 
-`cpp v1/`、`cpp v2/` 为本算法的 C++ 重写；`cpp_linux/` 为 ClickHouse 直连回放版
+`cpp v1/`、`cpp v2/` 为本算法的 C++ 重写
 （性能对比见仓库根 README）。
